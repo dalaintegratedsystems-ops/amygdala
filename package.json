@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "deploy": "DEPLOY_R2_BUCKET=\"${DEPLOY_R2_BUCKET:-amygdala-sources}\" DEPLOY_IMAGES=\"${DEPLOY_IMAGES:-1}\" vinext build && CLOUDFLARE_API_TOKEN=\"${CLOUDFLARE_API_TOKEN:-$Cloudflare_API_Token}\" CLOUDFLARE_ACCOUNT_ID=\"${CLOUDFLARE_ACCOUNT_ID:-$Cloudflare_Account_ID}\" wrangler deploy --config dist/server/wrangler.json"
+    "deploy": "DEPLOY_R2_BUCKET=\"${DEPLOY_R2_BUCKET:-amygdala-sources}\" DEPLOY_IMAGES=\"${DEPLOY_IMAGES:-1}\" DEPLOY_D1_ID=\"${DEPLOY_D1_ID:-9f1df21b-a410-4de1-90f7-83fc4a3fdf72}\" DEPLOY_D1_NAME=\"${DEPLOY_D1_NAME:-amygdala-db}\" vinext build && CLOUDFLARE_API_TOKEN=\"${CLOUDFLARE_API_TOKEN:-$Cloudflare_API_Token}\" CLOUDFLARE_ACCOUNT_ID=\"${CLOUDFLARE_ACCOUNT_ID:-$Cloudflare_Account_ID}\" wrangler deploy --config dist/server/wrangler.json"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
