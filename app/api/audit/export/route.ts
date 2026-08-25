@@ -1,14 +1,15 @@
-import { authorizeIdentity, exportAuditEvents, seedAuditEvents } from "../../../lib/security.mjs";
+import { env } from "cloudflare:workers";
+import { exportAuditEvents, seedAuditEvents } from "../../../lib/security.mjs";
+import { authorizeRequest } from "../../../lib/auth.mjs";
 
 export async function GET(request: Request) {
-  const token = request.headers.get("x-identity-token") ?? "";
-  const decision = authorizeIdentity(token, "export-audit");
+  const decision = await authorizeRequest(request, "export-audit", env as unknown as Record<string, unknown>);
   if (!decision.allowed) return Response.json({ error: "Audit export requires the export-audit capability.", reason: decision.reason }, { status: 403 });
 
   const url = new URL(request.url);
   const format = url.searchParams.get("format") === "csv" ? "csv" : "json";
-  // A tenant only ever exports its own scope (vendor sees its own events).
-  const options = { format, organisationId: decision.identity?.organisationId };
+  // A tenant only ever exports its own scope.
+  const options = { format, organisationId: decision.principal?.organisationId };
   const payload = exportAuditEvents(seedAuditEvents, options);
 
   const headers: Record<string, string> = { "cache-control": "no-store" };

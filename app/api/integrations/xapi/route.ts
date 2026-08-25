@@ -1,9 +1,9 @@
+import { env } from "cloudflare:workers";
 import { buildXapiStatements, competencyModels, defaultCompetencyModel, learnerByName } from "../../../lib/analytics.mjs";
-import { authorizeIdentity } from "../../../lib/security.mjs";
+import { authorizeRequest } from "../../../lib/auth.mjs";
 
 export async function GET(request: Request) {
-  const token = request.headers.get("x-identity-token") ?? "";
-  const decision = authorizeIdentity(token, "view-analytics");
+  const decision = await authorizeRequest(request, "view-analytics", env as unknown as Record<string, unknown>);
   if (!decision.allowed) return Response.json({ error: "xAPI export requires the view-analytics capability.", reason: decision.reason }, { status: 403 });
 
   const url = new URL(request.url);

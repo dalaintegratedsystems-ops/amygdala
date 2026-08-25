@@ -1,9 +1,9 @@
+import { env } from "cloudflare:workers";
 import { issueCredential } from "../../../lib/governance.mjs";
-import { authorizeIdentity } from "../../../lib/security.mjs";
+import { authorizeRequest } from "../../../lib/auth.mjs";
 
 export async function POST(request: Request) {
-  const token = request.headers.get("x-identity-token") ?? "";
-  const decision = authorizeIdentity(token, "issue-credential");
+  const decision = await authorizeRequest(request, "issue-credential", env as unknown as Record<string, unknown>);
   if (!decision.allowed) return Response.json({ error: "Issuing a credential requires the issue-credential capability.", reason: decision.reason }, { status: 403 });
 
   let body: Record<string, unknown> = {};
@@ -22,6 +22,6 @@ export async function POST(request: Request) {
     },
     { issuedAt: new Date().toISOString() },
   );
-  console.log(JSON.stringify({ event: "credential_issued", actor: decision.identity?.userId, code: credential.credentialSubject.credentialCode, timestamp: new Date().toISOString() }));
+  console.log(JSON.stringify({ event: "credential_issued", actor: decision.principal?.userId, code: credential.credentialSubject.credentialCode, timestamp: new Date().toISOString() }));
   return Response.json({ credential }, { headers: { "cache-control": "no-store" } });
 }

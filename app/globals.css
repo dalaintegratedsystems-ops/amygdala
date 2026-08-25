@@ -500,7 +500,52 @@ html[data-performance="low"] .sidebar, html[data-performance="low"] .app-header,
 .sim-coaching > span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; color: #4a3a12; background: var(--amber); font-weight: 800; }
 .sim-coaching p { margin: 0; color: #7a5f2a; font-size: 9px; }
 
+/* Sign-in */
+.signin-main { max-width: 460px; margin: 0 auto; padding: 60px 24px 100px; }
+.signin-card { padding: 34px; border: 1px solid var(--line-strong); border-radius: 20px; background: rgba(12,19,33,.92); box-shadow: var(--shadow); }
+.signin-card h1 { margin: 14px 0 8px; font-size: 30px; letter-spacing: -.03em; }
+.signin-card > p { font-size: 12px; }
+.signin-form { margin: 20px 0 8px; display: grid; gap: 6px; }
+.signin-form label { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; margin-top: 8px; }
+.signin-form input { min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: #0d1523; color: var(--ink); font-size: 13px; }
+.signin-form .button { margin-top: 16px; }
+.signin-error { margin: 10px 0 0; color: var(--danger); font-size: 11px; }
+.signin-demo { margin-top: 20px; padding: 13px 15px; display: grid; gap: 3px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255,255,255,.02); }
+.signin-demo strong { font-size: 10px; }
+.signin-demo span { color: var(--muted); font-size: 10px; }
+.signin-sso { margin-top: 16px; text-align: center; }
+.signin-sso > span { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; }
+.signin-sso > div { margin: 10px 0 6px; display: flex; gap: 8px; }
+.signin-sso .button { flex: 1; }
+.signin-sso small { color: var(--dim); font-size: 9px; }
+
+/* Sign out */
+.signout-button { width: 100%; margin-top: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--muted); font-size: 10px; cursor: pointer; }
+.signout-button:hover { color: var(--ink); border-color: var(--line-strong); }
+
+/* Upload studio + AI extraction */
+.upload-studio { margin-bottom: 14px; overflow: hidden; }
+.engine-badge { padding: 4px 9px; border: 1px solid rgba(123,228,189,.25); border-radius: 99px; color: var(--green); background: rgba(123,228,189,.06); font-size: 8px; font-weight: 750; }
+.upload-studio-body { padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.upload-inputs { display: grid; gap: 12px; align-content: start; }
+.upload-inputs textarea { width: 100%; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: #0d1523; color: var(--ink); font-size: 12px; resize: vertical; }
+.upload-inputs input[type="text"], .upload-inputs .studio-field input { min-height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; background: #0d1523; color: var(--ink); font-size: 12px; }
+.upload-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.visually-hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.extract-result { padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(9,15,26,.5); align-self: start; }
+.extract-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.grounded-chip { color: var(--green); font-size: 9px; font-weight: 700; }
+.extract-meta { color: var(--dim); font-size: 8px; }
+.extract-summary { margin: 12px 0; font-size: 11px; line-height: 1.6; }
+.keyword-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.keyword-chips span { padding: 3px 8px; border: 1px solid var(--line); border-radius: 99px; color: var(--cyan-bright); font-size: 8px; background: rgba(114,221,239,.05); }
+.extract-steps ol { margin: 8px 0 0; padding-left: 18px; }
+.extract-steps li { margin: 4px 0; color: var(--muted); font-size: 10px; }
+.extract-steps em { color: var(--green); font-size: 8px; font-style: normal; }
+.extract-cta { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.approved-note { color: var(--green); font-size: 10px; font-weight: 700; }
+
 @media (max-width: 1100px) {
-  .studio-layout, .security-grid { grid-template-columns: 1fr; }
+  .studio-layout, .security-grid, .upload-studio-body { grid-template-columns: 1fr; }
   .security-body.adapter-body { grid-template-columns: 1fr; }
 }

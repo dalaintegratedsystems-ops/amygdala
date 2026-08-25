@@ -17,13 +17,13 @@ import { buildTranscript, generateProcedureDiagramSvg } from "./lib/simulation.m
 import { platformRoleCapabilities } from "./lib/security.mjs";
 import { competencyModels, defaultCompetencyModel, listIntegrationConnectors } from "./lib/analytics.mjs";
 import { issueCredential, planContentReverification, runGroundingEval, verifyCredential } from "./lib/governance.mjs";
+import { extractKnowledge } from "./lib/ingest.mjs";
 
-// Demo identity tokens for the enterprise APIs (RBAC + tenant isolation are
-// enforced server-side). The admin console acts as the vendor administrator.
-const ADMIN_TOKEN = "tok-vera";
-
-async function downloadResponse(url: string, filename: string, token?: string) {
-  const response = await fetch(url, token ? { headers: { "x-identity-token": token } } : undefined);
+// The enterprise APIs authenticate via the HttpOnly session cookie (sent
+// automatically on same-origin fetches); RBAC + tenant isolation are
+// enforced server-side from the verified session.
+async function downloadResponse(url: string, filename: string) {
+  const response = await fetch(url);
   const blob = await response.blob();
   triggerDownload(URL.createObjectURL(blob), filename);
 }
@@ -258,11 +258,11 @@ function DemoEntry({ setPath }: { setPath: (path: string) => void }) {
       <main className="demo-entry">
         <div className="section-heading centered"><span className="eyebrow">Interactive NexusFlow pilot</span><h1>Choose your perspective.</h1><p>Both workspaces are preloaded. No credentials, configuration or external services are required.</p></div>
         <div className="role-grid">
-          <button className="role-card vendor" onClick={() => navigate("/admin/command-centre", setPath)}>
-            <span className="role-visual"><i>NF</i><b>Vendor</b></span><span className="role-copy"><small>Experience as</small><strong>Vendor Administrator</strong><em>Curate knowledge, review AI activity and track customer readiness.</em><span>Open Command Centre →</span></span>
+          <button className="role-card vendor" onClick={() => navigate("/signin?as=admin", setPath)}>
+            <span className="role-visual"><i>NF</i><b>Vendor</b></span><span className="role-copy"><small>Experience as</small><strong>Vendor Administrator</strong><em>Curate knowledge, review AI activity and track customer readiness.</em><span>Sign in to Command Centre →</span></span>
           </button>
-          <button className="role-card learner" onClick={() => navigate("/learner/home", setPath)}>
-            <span className="role-visual"><i>AN</i><b>Learner</b></span><span className="role-copy"><small>Experience as</small><strong>Customer Learner</strong><em>Follow a pathway, ask the Product Guide and practise NexusFlow.</em><span>Accept demo invitation →</span></span>
+          <button className="role-card learner" onClick={() => navigate("/signin?as=learner", setPath)}>
+            <span className="role-visual"><i>AN</i><b>Learner</b></span><span className="role-copy"><small>Experience as</small><strong>Customer Learner</strong><em>Follow a pathway, ask the Product Guide and practise NexusFlow.</em><span>Sign in to learning →</span></span>
           </button>
         </div>
         <div className="demo-note"><span>●</span><p><strong>Safe demonstration environment</strong> All content and users are fictional. Simulations never connect to a live NexusFlow workspace.</p></div>
@@ -281,8 +281,9 @@ function Sidebar({ mode, path, setPath, mobileOpen, closeMobile }: { mode: "admi
         {nav.map(([href, label, icon]) => <button key={href} className={path === href ? "active" : ""} onClick={() => { navigate(href, setPath); closeMobile(); }}><i aria-hidden="true">{icon}</i><span>{label}</span>{path === href && <b />}</button>)}
       </nav>
       <div className="sidebar-bottom">
-        <div className="environment-chip"><span /> Interactive demo</div>
+        <div className="environment-chip"><span /> Signed-in session</div>
         <button className="profile-chip" onClick={() => navigate(mode === "admin" ? "/admin/workspace-settings" : "/learner/profile", setPath)}><span>{mode === "admin" ? "VN" : "AN"}</span><span><strong>{mode === "admin" ? "Vera Ndlovu" : "Aisha Naidoo"}</strong><small>{mode === "admin" ? "Vendor Administrator" : "Project Manager"}</small></span><i>•••</i></button>
+        <button className="signout-button" onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/"; }}>Sign out</button>
       </div>
     </aside>
   );
@@ -395,24 +396,77 @@ type GeneratedCourse = {
   reviewChecklist: string[];
 };
 
-// Rec 1 + 2: grounded docs -> course authoring studio with a visual,
-// human-approved review step.
-function AuthoringStudio() {
+type ExtractedResult = {
+  ok: boolean;
+  message?: string;
+  source: { id: string; title: string; module: string; version: string; section: string; status: string; approvalStatus: string; keywords: string[]; procedure: string[]; explanation: string; extractedText: string };
+  chunks: Array<{ section: string; content: string; tokenCount: number }>;
+  grounding: { grounded: boolean; groundedCount: number; total: number };
+  engine: { engine: string; requiresApiKey: boolean; grounding: string; humanApproval: boolean };
+  summary: { sections: number; chunks: number; procedureSteps: number; keywords: number };
+};
+
+const SAMPLE_DOC = `# Configure a workflow automation
+
+Automations run an approved action when a trigger event happens.
+
+1. Open Workflows from the primary navigation.
+2. Select New automation.
+3. Choose an approved trigger and configure its conditions.
+4. Choose an action and complete its required fields.
+5. Review the automation summary.
+6. Select Activate.`;
+
+// Rec 1 + 2: grounded docs -> course authoring studio. Admins can either
+// pick an approved source or upload a document that AI extracts into a
+// grounded, human-approved draft — then generate a cited course.
+function AuthoringStudio({ captions = true }: { captions?: boolean }) {
   const publishable = seededSources.filter((source) => source.status === "Published" && source.approvalStatus === "Approved" && Array.isArray(source.procedure) && source.procedure.length > 0);
   const [sourceId, setSourceId] = useState(publishable[0]?.id ?? "");
   const [course, setCourse] = useState<GeneratedCourse | null>(null);
   const [published, setPublished] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [courseKind, setCourseKind] = useState<"seeded" | "upload">("seeded");
 
-  async function generate(approve = false) {
-    setLoading(true);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadText, setUploadText] = useState("");
+  const [extracted, setExtracted] = useState<ExtractedResult | null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState("");
+  const [sourceApproved, setSourceApproved] = useState(false);
+
+  async function readFile(file?: File) {
+    if (!file) return;
+    setUploadTitle((previous) => previous || file.name.replace(/\.[^.]+$/, ""));
+    setUploadText(await file.text());
+  }
+
+  async function extract() {
+    setExtracting(true); setExtractError(""); setExtracted(null); setSourceApproved(false); setCourse(null);
+    const payload = { title: uploadTitle || "Imported source", filename: uploadTitle || "document", mimeType: "text/markdown", text: uploadText };
     try {
-      const response = await fetch("/api/authoring/generate", { method: "POST", headers: { "content-type": "application/json", "x-identity-token": ADMIN_TOKEN }, body: JSON.stringify({ sourceId, approve }) });
+      const response = await fetch("/api/sources/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error ?? "Extraction failed"); }
+      setExtracted((await response.json()) as ExtractedResult);
+    } catch {
+      const local = extractKnowledge(payload) as unknown as ExtractedResult;
+      if (local.ok) setExtracted(local); else setExtractError(local.message ?? "Provide document text to extract.");
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  async function generate(kind: "seeded" | "upload", approve = false) {
+    setLoading(true); setCourseKind(kind);
+    const uploadSource = extracted ? { ...extracted.source, status: "Published", approvalStatus: "Approved" } : null;
+    const body = kind === "upload" ? { source: uploadSource, approve } : { sourceId, approve };
+    try {
+      const response = await fetch("/api/authoring/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       if (!response.ok) throw new Error("generation failed");
       const data = (await response.json()) as { course: GeneratedCourse };
       setCourse(data.course);
     } catch {
-      const source = seededSources.find((item) => item.id === sourceId);
+      const source = kind === "upload" ? uploadSource : seededSources.find((item) => item.id === sourceId);
       const generated = generateCourseFromSource(source);
       setCourse((approve ? approveCourse(generated) : generated) as unknown as GeneratedCourse);
     } finally {
@@ -424,15 +478,49 @@ function AuthoringStudio() {
   return (
     <div className="page-content">
       <div className="page-heading">
-        <div><span className="eyebrow">Grounded authoring</span><h1>Training Studio</h1><p>Turn an approved source document into a complete, cited draft course. Every artefact is generated deterministically and waits for your approval.</p></div>
+        <div><span className="eyebrow">Grounded authoring</span><h1>Training Studio</h1><p>Upload a document for AI extraction, or pick an approved source. Every artefact is grounded to its source and waits for your approval.</p></div>
       </div>
+
+      <section className="panel upload-studio">
+        <div className="panel-header"><div><span className="tiny-label">AI document upload</span><h2>Extract knowledge from a document</h2></div>{extracted && <span className="engine-badge">{extracted.engine.engine === "deterministic" ? "Deterministic · no API key" : extracted.engine.engine}</span>}</div>
+        <div className="upload-studio-body">
+          <div className="upload-inputs">
+            <label className="studio-field"><span className="tiny-label">Document title</span><input aria-label="Document title" value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} placeholder="e.g. Configure a workflow automation" /></label>
+            <label className="studio-field"><span className="tiny-label">Document text (paste, or choose a .txt/.md file)</span><textarea aria-label="Document text" value={uploadText} onChange={(event) => setUploadText(event.target.value)} rows={7} placeholder="Paste the approved document text here…" /></label>
+            <div className="upload-actions">
+              <input id="doc-file" type="file" accept=".txt,.md,text/plain,text/markdown" className="visually-hidden-file" onChange={(event) => readFile(event.target.files?.[0])} />
+              <label htmlFor="doc-file" className="button button-secondary button-small">Choose .txt/.md file</label>
+              <button type="button" className="button button-secondary button-small" onClick={() => { setUploadTitle("Configure a workflow automation"); setUploadText(SAMPLE_DOC); }}>Use sample document</button>
+              <button type="button" className="button button-primary" onClick={extract} disabled={extracting || uploadText.trim().length < 20}>{extracting ? "Extracting…" : "Extract knowledge with AI"} <span>✦</span></button>
+            </div>
+            {extractError && <p className="signin-error" role="alert">{extractError}</p>}
+          </div>
+
+          {extracted && extracted.ok && (
+            <div className="extract-result">
+              <div className="extract-head"><StatusPill value={sourceApproved ? "Approved" : "Draft"} /><span className="grounded-chip">{extracted.grounding.grounded ? "✓ Fully grounded" : `${extracted.grounding.groundedCount}/${extracted.grounding.total} grounded`}</span><span className="extract-meta">{extracted.summary.chunks} chunks · {extracted.summary.procedureSteps} steps · {extracted.summary.keywords} keywords</span></div>
+              <p className="extract-summary">{extracted.source.explanation}</p>
+              <div className="keyword-chips">{extracted.source.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>
+              <div className="extract-steps"><span className="tiny-label">Extracted procedure (span-verified)</span><ol>{extracted.source.procedure.map((step, index) => <li key={index}>{step} <em>✓ grounded</em></li>)}</ol></div>
+              <ProcedureDiagram steps={extracted.source.procedure} title={extracted.source.title} captions={captions} />
+              <div className="extract-cta">
+                {!sourceApproved
+                  ? <button className="button button-secondary" onClick={() => setSourceApproved(true)}>Approve source for training</button>
+                  : <span className="approved-note">✓ Source approved</span>}
+                <button className="button button-primary" onClick={() => generate("upload", false)} disabled={!sourceApproved || loading}>Generate course from this document →</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
       <section className="panel studio-toolbar">
-        <label className="studio-field"><span className="tiny-label">Approved source</span>
+        <label className="studio-field"><span className="tiny-label">Or generate from an approved source</span>
           <select aria-label="Choose an approved source" value={sourceId} onChange={(event) => { setSourceId(event.target.value); setCourse(null); }}>
             {publishable.map((source) => <option key={source.id} value={source.id}>{source.title} · v{source.version}</option>)}
           </select>
         </label>
-        <button className="button button-primary" onClick={() => generate(false)} disabled={loading || !sourceId}>{loading ? "Generating…" : "Generate grounded course"} <span>✦</span></button>
+        <button className="button button-primary" onClick={() => generate("seeded", false)} disabled={loading || !sourceId}>{loading ? "Generating…" : "Generate grounded course"} <span>✦</span></button>
       </section>
 
       {course && (
@@ -460,7 +548,7 @@ function AuthoringStudio() {
               <div className="review-checklist"><span className="tiny-label">Human review before publish</span><ul className="check-list">{course.reviewChecklist.map((item) => <li key={item}>{item}</li>)}</ul></div>
               {published
                 ? <div className="published-banner"><span>✓</span><p><strong>Published to the programme.</strong> Learners now receive this grounded pathway.</p></div>
-                : <button className="button button-primary full-width" onClick={() => generate(true)} disabled={loading}>Approve &amp; publish course →</button>}
+                : <button className="button button-primary full-width" onClick={() => generate(courseKind, true)} disabled={loading}>Approve &amp; publish course →</button>}
             </aside>
           </div>
         </>
@@ -479,7 +567,7 @@ type EnterpriseConfig = {
 function IdentitySecurity() {
   const [config, setConfig] = useState<EnterpriseConfig | null>(null);
   useEffect(() => {
-    fetch("/api/enterprise/config", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then(setConfig).catch(() => setConfig(null));
+    fetch("/api/enterprise/config").then((response) => response.json()).then(setConfig).catch(() => setConfig(null));
   }, []);
   const capabilities = platformRoleCapabilities as Record<string, string[]>;
   const roles = Object.keys(capabilities);
@@ -488,7 +576,7 @@ function IdentitySecurity() {
   return (
     <div className="page-content">
       <div className="page-heading"><div><span className="eyebrow">Enterprise controls</span><h1>Identity &amp; security</h1><p>SSO, provisioning, role-based access, tenant isolation and the grounded AI adapter—configured for enterprise deployment.</p></div>
-        <button className="button button-secondary" onClick={() => downloadResponse("/api/audit/export?format=csv", "amygdala-audit.csv", ADMIN_TOKEN)}>Export audit log (CSV)</button></div>
+        <button className="button button-secondary" onClick={() => downloadResponse("/api/audit/export?format=csv", "amygdala-audit.csv")}>Export audit log (CSV)</button></div>
 
       <div className="security-grid">
         <section className="panel security-card"><div className="panel-header"><div><span className="tiny-label">Single sign-on</span><h2>SSO &amp; provisioning</h2></div><StatusPill value="Configurable" /></div><div className="security-body">
@@ -531,7 +619,7 @@ function GovernanceConsole() {
 
   async function loadEval(): Promise<EvalReport> {
     try {
-      const response = await fetch("/api/governance/eval", { headers: { "x-identity-token": ADMIN_TOKEN } });
+      const response = await fetch("/api/governance/eval");
       return (await response.json()) as EvalReport;
     } catch {
       return runGroundingEval() as unknown as EvalReport;
@@ -546,7 +634,7 @@ function GovernanceConsole() {
   useEffect(() => {
     let active = true;
     loadEval().then((result) => { if (active) setReport(result); });
-    fetch("/api/governance/reverification", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then((data) => { if (active) setPlan(data.plan); }).catch(() => { if (active) setPlan(planContentReverification() as unknown as ReverificationItem[]); });
+    fetch("/api/governance/reverification").then((response) => response.json()).then((data) => { if (active) setPlan(data.plan); }).catch(() => { if (active) setPlan(planContentReverification() as unknown as ReverificationItem[]); });
     return () => { active = false; };
   }, []);
 
@@ -579,15 +667,15 @@ function IntegrationsConsole() {
   const connectors = listIntegrationConnectors() as Array<{ id: string; name: string; protocol: string; direction: string; status: string }>;
   const [xapiPreview, setXapiPreview] = useState<string>("");
   useEffect(() => {
-    fetch("/api/integrations/xapi?learner=Aisha%20Naidoo", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then((data) => setXapiPreview(JSON.stringify(data.statements?.[3] ?? data, null, 2))).catch(() => setXapiPreview(""));
+    fetch("/api/integrations/xapi?learner=Aisha%20Naidoo").then((response) => response.json()).then((data) => setXapiPreview(JSON.stringify(data.statements?.[3] ?? data, null, 2))).catch(() => setXapiPreview(""));
   }, []);
 
   return (
     <div className="page-content">
       <div className="page-heading"><div><span className="eyebrow">Systems of record</span><h1>Integrations</h1><p>Push verified readiness into enterprise LMS and LRS platforms with standards-based exports.</p></div>
         <div className="page-actions">
-          <button className="button button-secondary" onClick={() => downloadResponse("/api/integrations/scorm", "imsmanifest.xml", ADMIN_TOKEN)}>Export SCORM manifest</button>
-          <button className="button button-primary" onClick={() => downloadResponse("/api/integrations/xapi?learner=Aisha%20Naidoo", "amygdala-xapi.json", ADMIN_TOKEN)}>Export xAPI statements</button>
+          <button className="button button-secondary" onClick={() => downloadResponse("/api/integrations/scorm", "imsmanifest.xml")}>Export SCORM manifest</button>
+          <button className="button button-primary" onClick={() => downloadResponse("/api/integrations/xapi?learner=Aisha%20Naidoo", "amygdala-xapi.json")}>Export xAPI statements</button>
         </div>
       </div>
       <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Connector catalogue</span><h2>LMS &amp; LRS</h2></div></div><div className="table-scroll"><table><thead><tr><th>Connector</th><th>Protocol</th><th>Direction</th><th>Status</th></tr></thead><tbody>
@@ -604,7 +692,7 @@ function AnalyticsPage() {
   const [gaps, setGaps] = useState<Array<{ topic: string; count: number; status: string; recommendation: string; organisations: string[] }>>([]);
   const [modelId, setModelId] = useState(defaultCompetencyModel.id);
   useEffect(() => {
-    fetch("/api/analytics/gaps", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then((data) => setGaps(data.gaps ?? [])).catch(() => setGaps([]));
+    fetch("/api/analytics/gaps").then((response) => response.json()).then((data) => setGaps(data.gaps ?? [])).catch(() => setGaps([]));
   }, []);
   const models = competencyModels as Array<{ id: string; name: string; weights: { learning: number; simulation: number; assessment: number }; passThreshold: number }>;
   const model = models.find((item) => item.id === modelId) ?? models[0];
@@ -831,12 +919,73 @@ function LearnerApp({ path, setPath }: { path: string; setPath: (path: string) =
   return <Shell mode="learner" path={path} setPath={setPath}>{content}</Shell>;
 }
 
+type SessionUser = { userId: string; email: string; displayName: string; role: string; organisationId: string };
+
+const DEMO_ACCOUNTS: Record<string, { email: string; label: string }> = {
+  admin: { email: "vera@nexusflow.example", label: "Vendor Administrator" },
+  learner: { email: "aisha@aurora.example", label: "Customer Learner" },
+};
+const DEMO_PASSWORD = "Amygdala-Demo-2026";
+
+function SignIn({ setPath }: { setPath: (path: string) => void }) {
+  const as = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("as") ?? "admin" : "admin";
+  const preset = DEMO_ACCOUNTS[as] ?? DEMO_ACCOUNTS.admin;
+  const [email, setEmail] = useState(preset.email);
+  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setLoading(true); setError("");
+    try {
+      const response = await fetch("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+      if (!response.ok) { const data = (await response.json().catch(() => ({}))) as { error?: string }; setError(data.error ?? "Sign-in failed."); return; }
+      const data = (await response.json()) as { user: SessionUser };
+      window.location.href = data.user.role === "Customer Learner" ? "/learner/home" : "/admin/command-centre";
+    } catch {
+      setError("Sign-in failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="marketing-shell">
+      <MarketingHeader path="/signin" setPath={setPath} />
+      <main className="signin-main">
+        <div className="signin-card">
+          <span className="eyebrow"><span /> Secure sign-in</span>
+          <h1>Sign in to Amygdala</h1>
+          <p>Enterprise SSO-ready. Sessions are signed and HttpOnly; access is enforced by role and tenant on the server.</p>
+          <form onSubmit={submit} className="signin-form">
+            <label htmlFor="signin-email">Work email</label>
+            <input id="signin-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
+            <label htmlFor="signin-password">Password</label>
+            <input id="signin-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+            {error && <p className="signin-error" role="alert">{error}</p>}
+            <button className="button button-primary full-width" type="submit" disabled={loading}>{loading ? "Signing in…" : "Sign in"}</button>
+          </form>
+          <div className="signin-demo"><strong>Demo accounts</strong><span>Vendor admin — vera@nexusflow.example</span><span>Learner — aisha@aurora.example</span><span>Password — {DEMO_PASSWORD}</span></div>
+          <div className="signin-sso"><span>Enterprise single sign-on</span><div><button className="button button-secondary button-small" type="button" disabled>SAML SSO</button><button className="button button-secondary button-small" type="button" disabled>OIDC</button></div><small>SSO/SCIM configured per enterprise tenant.</small></div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
 export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: string }) {
   const [path, setPath] = useState(initialPath);
+  const [session, setSession] = useState<SessionUser | null | undefined>(undefined);
   useEffect(() => {
     const handler = () => setPath(window.location.pathname);
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/session").then((response) => (response.ok ? response.json() : null)).then((data) => { if (active) setSession((data as { user: SessionUser } | null)?.user ?? null); }).catch(() => { if (active) setSession(null); });
+    return () => { active = false; };
   }, []);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
@@ -844,7 +993,11 @@ export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: strin
     };
     window.addEventListener("keydown", shortcut); return () => window.removeEventListener("keydown", shortcut);
   }, []);
-  const view = useMemo(() => path.startsWith("/admin") ? "admin" : path.startsWith("/learner") ? "learner" : path === "/demo" ? "demo" : "landing", [path]);
+  const view = useMemo(() => path.startsWith("/admin") ? "admin" : path.startsWith("/learner") ? "learner" : path.startsWith("/signin") ? "signin" : path === "/demo" ? "demo" : "landing", [path]);
+  if (view === "signin") return <SignIn setPath={setPath} />;
+  // Client-side guard: unauthenticated users are sent to sign-in. (Server-side
+  // enforcement lives on the API routes; SSR content is non-sensitive demo data.)
+  if ((view === "admin" || view === "learner") && session === null) return <SignIn setPath={setPath} />;
   if (view === "admin") return <AdminApp path={path} setPath={setPath} />;
   if (view === "learner") return <LearnerApp path={path} setPath={setPath} />;
   if (view === "demo") return <DemoEntry setPath={setPath} />;
