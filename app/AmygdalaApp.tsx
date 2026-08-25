@@ -125,7 +125,7 @@ function navigate(path: string, setPath: (path: string) => void) {
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="brand" aria-label="Amygdala home">
-      <span className="brand-mark" aria-hidden="true"><Image src="/amygdala-logo-96.png" alt="" width={40} height={40} sizes="40px" priority /></span>
+      <span className="brand-mark" aria-hidden="true"><Image src="/amygdala-logo-96.png" alt="" width={40} height={40} sizes="40px" priority unoptimized /></span>
       {!compact && <span className="brand-name">amygdala</span>}
     </div>
   );

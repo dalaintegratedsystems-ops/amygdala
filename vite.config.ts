@@ -43,13 +43,23 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async ({ command }) => {
-  // Attach custom-domain routes only when building for deployment. When
-  // DEPLOY_MINIMAL=1, drop the placeholder D1/R2 bindings so a first deploy
-  // succeeds without provisioning those resources (the app runs in-memory;
-  // source upload degrades gracefully). Provide real bindings to re-enable.
-  const minimal = process.env.DEPLOY_MINIMAL === "1";
+  // Deploy-time bindings come from env so account-specific resources aren't
+  // hardcoded. Unset bindings are omitted, so a first deploy stays clean and
+  // real resources are enabled by setting the corresponding env var:
+  //   DEPLOY_R2_BUCKET  -> R2 bucket for source uploads (binding SOURCES)
+  //   DEPLOY_D1_ID/_NAME-> D1 database (binding DB)
+  //   DEPLOY_IMAGES=1   -> Cloudflare Images binding (IMAGES) for optimisation
+  const r2Bucket = process.env.DEPLOY_R2_BUCKET;
+  const d1Id = process.env.DEPLOY_D1_ID;
+  const withImages = process.env.DEPLOY_IMAGES === "1";
   const workerConfig = command === "build"
-    ? { ...localBindingConfig, routes: deployRoutes, ...(minimal ? { d1_databases: [], r2_buckets: [] } : {}) }
+    ? {
+        ...localBindingConfig,
+        routes: deployRoutes,
+        r2_buckets: r2Bucket ? [{ binding: "SOURCES", bucket_name: r2Bucket }] : [],
+        d1_databases: d1Id ? [{ binding: "DB", database_name: process.env.DEPLOY_D1_NAME || "amygdala-db", database_id: d1Id }] : [],
+        ...(withImages ? { images: { binding: "IMAGES" } } : {}),
+      }
     : localBindingConfig;
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
