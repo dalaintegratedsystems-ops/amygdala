@@ -12,6 +12,51 @@ import {
   modules,
   sources as seededSources,
 } from "./lib/domain.mjs";
+import { approveCourse, generateCourseFromSource } from "./lib/authoring.mjs";
+import { buildTranscript, generateProcedureDiagramSvg } from "./lib/simulation.mjs";
+import { platformRoleCapabilities } from "./lib/security.mjs";
+import { competencyModels, defaultCompetencyModel, listIntegrationConnectors } from "./lib/analytics.mjs";
+import { issueCredential, planContentReverification, runGroundingEval, verifyCredential } from "./lib/governance.mjs";
+
+// Demo identity tokens for the enterprise APIs (RBAC + tenant isolation are
+// enforced server-side). The admin console acts as the vendor administrator.
+const ADMIN_TOKEN = "tok-vera";
+
+async function downloadResponse(url: string, filename: string, token?: string) {
+  const response = await fetch(url, token ? { headers: { "x-identity-token": token } } : undefined);
+  const blob = await response.blob();
+  triggerDownload(URL.createObjectURL(blob), filename);
+}
+
+function downloadJson(filename: string, data: unknown) {
+  triggerDownload(URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })), filename);
+}
+
+function triggerDownload(href: string, filename: string) {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(href);
+}
+
+function percent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function ProcedureDiagram({ steps, title, accent = "cyan", captions = true }: { steps: string[]; title: string; accent?: string; captions?: boolean }) {
+  const svg = generateProcedureDiagramSvg(steps, { title, accent });
+  const transcript = buildTranscript(steps, { title });
+  return (
+    <figure className="procedure-figure">
+      <div className="procedure-diagram" role="group" aria-label={`${title}: visual step-by-step flow`} dangerouslySetInnerHTML={{ __html: svg }} />
+      <details className="procedure-transcript" open={captions}>
+        <summary>Text transcript &amp; captions</summary>
+        <ol>{transcript.captions.map((caption: { index: number; text: string }) => <li key={caption.index}>{caption.text}</li>)}</ol>
+      </details>
+    </figure>
+  );
+}
 
 type GuideMode = "explain" | "guide";
 type GuideResult = {
@@ -33,7 +78,9 @@ const adminNavigation = [
   ["/admin/content-review", "Content review", "✓"],
   ["/admin/ai-activity", "AI activity", "⌁"],
   ["/admin/analytics", "Analytics", "↗"],
-  ["/admin/workspace-settings", "Workspace settings", "⚙"],
+  ["/admin/governance", "Governance", "⚖"],
+  ["/admin/integrations", "Integrations", "⇄"],
+  ["/admin/workspace-settings", "Identity & security", "⚙"],
 ];
 
 const learnerNavigation = [
@@ -334,13 +381,268 @@ function PlaceholderAdmin({ path }: { path: string }) {
   return <div className="page-content"><div className="page-heading"><div><span className="eyebrow">NexusFlow workspace</span><h1>{name}</h1><p>This view uses the same seeded, tenant-isolated prototype data.</p></div></div><section className="panel placeholder-panel"><span className="feature-icon knowledge">✦</span><h2>{name} is connected to the demo journey.</h2><p>Use Command Centre, Knowledge Vault, Programmes, AI activity and Analytics for the complete stakeholder walkthrough.</p></section></div>;
 }
 
+type Citation = { sourceId: string; title: string; version: string; section: string };
+type GeneratedCourse = {
+  ok?: boolean;
+  programme: { id: string; title: string; role: string; status: string; approvalStatus: string; citation: Citation };
+  modules: Array<{ id: string; label: string; title: string; duration: number; citation: Citation }>;
+  lessons: Array<{ id: string; title: string; content: string; label: string; citation: Citation }>;
+  diagnostic: unknown[];
+  assessment: { passThreshold: number; questions: Array<{ id: string; question: string; options: string[]; citation: Citation }> };
+  simulation: { title: string; steps: Array<{ label: string; hint: string; coaching: string }>; citation: Citation };
+  provenance: { generator: string; grounded: boolean; sourceVersion: string; sourceSection: string };
+  citation: Citation;
+  reviewChecklist: string[];
+};
+
+// Rec 1 + 2: grounded docs -> course authoring studio with a visual,
+// human-approved review step.
+function AuthoringStudio() {
+  const publishable = seededSources.filter((source) => source.status === "Published" && source.approvalStatus === "Approved" && Array.isArray(source.procedure) && source.procedure.length > 0);
+  const [sourceId, setSourceId] = useState(publishable[0]?.id ?? "");
+  const [course, setCourse] = useState<GeneratedCourse | null>(null);
+  const [published, setPublished] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function generate(approve = false) {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/authoring/generate", { method: "POST", headers: { "content-type": "application/json", "x-identity-token": ADMIN_TOKEN }, body: JSON.stringify({ sourceId, approve }) });
+      if (!response.ok) throw new Error("generation failed");
+      const data = (await response.json()) as { course: GeneratedCourse };
+      setCourse(data.course);
+    } catch {
+      const source = seededSources.find((item) => item.id === sourceId);
+      const generated = generateCourseFromSource(source);
+      setCourse((approve ? approveCourse(generated) : generated) as unknown as GeneratedCourse);
+    } finally {
+      setPublished(approve);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="page-content">
+      <div className="page-heading">
+        <div><span className="eyebrow">Grounded authoring</span><h1>Training Studio</h1><p>Turn an approved source document into a complete, cited draft course. Every artefact is generated deterministically and waits for your approval.</p></div>
+      </div>
+      <section className="panel studio-toolbar">
+        <label className="studio-field"><span className="tiny-label">Approved source</span>
+          <select aria-label="Choose an approved source" value={sourceId} onChange={(event) => { setSourceId(event.target.value); setCourse(null); }}>
+            {publishable.map((source) => <option key={source.id} value={source.id}>{source.title} · v{source.version}</option>)}
+          </select>
+        </label>
+        <button className="button button-primary" onClick={() => generate(false)} disabled={loading || !sourceId}>{loading ? "Generating…" : "Generate grounded course"} <span>✦</span></button>
+      </section>
+
+      {course && (
+        <>
+          <div className="studio-stats vault-stats">
+            <div><strong>{course.modules.length}</strong><span>Modules</span></div>
+            <div><strong>{course.lessons.length}</strong><span>Lessons</span></div>
+            <div><strong>{course.assessment.questions.length}</strong><span>Assessment items</span></div>
+            <div><strong>{course.simulation.steps.length}</strong><span>Simulation steps</span></div>
+          </div>
+          <div className="studio-layout">
+            <section className="panel studio-course">
+              <div className="panel-header"><div><span className="tiny-label">Generated programme</span><h2>{course.programme.title}</h2></div><StatusPill value={published ? "Published" : "Draft"} /></div>
+              <div className="studio-body">
+                <div className="provenance-chip"><span>▣</span><span><strong>Grounded generation</strong><small>{course.provenance.generator} · cites {course.citation.title} v{course.provenance.sourceVersion} · {course.provenance.sourceSection}</small></span></div>
+                {course.modules.map((module) => <div className="studio-module" key={module.id}><span className={`module-symbol ${module.label.toLowerCase()}`}>{module.label === "Learn" ? "◫" : module.label === "Practise" ? "◇" : "✓"}</span><span><small>{module.label} · {module.duration} min</small><strong>{module.title}</strong></span></div>)}
+                {course.lessons.map((lesson) => <div className="studio-lesson" key={lesson.id}><strong>{lesson.title}</strong><p>{lesson.content}</p><span className="citation-inline">▣ {lesson.citation.title} · v{lesson.citation.version} · {lesson.citation.section}</span></div>)}
+                <div className="studio-assessment"><span className="tiny-label">Assessment · pass threshold {course.assessment.passThreshold}%</span>{course.assessment.questions.map((question) => <div className="studio-question" key={question.id}><strong>{question.question}</strong><em>Approved answer: {question.options[0]}</em></div>)}</div>
+              </div>
+            </section>
+            <aside className="panel studio-visual">
+              <span className="tiny-label">Immersive simulation preview</span>
+              <h2>{course.simulation.title}</h2>
+              <ProcedureDiagram steps={course.simulation.steps.map((step) => step.label)} title={course.simulation.title} accent="violet" />
+              <div className="review-checklist"><span className="tiny-label">Human review before publish</span><ul className="check-list">{course.reviewChecklist.map((item) => <li key={item}>{item}</li>)}</ul></div>
+              {published
+                ? <div className="published-banner"><span>✓</span><p><strong>Published to the programme.</strong> Learners now receive this grounded pathway.</p></div>
+                : <button className="button button-primary full-width" onClick={() => generate(true)} disabled={loading}>Approve &amp; publish course →</button>}
+            </aside>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Rec 3: identity, RBAC, tenancy and the AI-adapter posture.
+type EnterpriseConfig = {
+  identity: { sso: Record<string, unknown>; scim: Record<string, unknown>; session: Record<string, unknown>; dataResidency: Record<string, unknown>; compliance: string[] };
+  adapter: { name: string; mode: string; credentialed: boolean; retrievalBoundary: string; responseContract: string };
+  connectors: Array<{ id: string; name: string; protocol: string; status: string }>;
+};
+
+function IdentitySecurity() {
+  const [config, setConfig] = useState<EnterpriseConfig | null>(null);
+  useEffect(() => {
+    fetch("/api/enterprise/config", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then(setConfig).catch(() => setConfig(null));
+  }, []);
+  const capabilities = platformRoleCapabilities as Record<string, string[]>;
+  const roles = Object.keys(capabilities);
+  const actions = [...new Set(roles.flatMap((role) => capabilities[role]))].sort();
+
+  return (
+    <div className="page-content">
+      <div className="page-heading"><div><span className="eyebrow">Enterprise controls</span><h1>Identity &amp; security</h1><p>SSO, provisioning, role-based access, tenant isolation and the grounded AI adapter—configured for enterprise deployment.</p></div>
+        <button className="button button-secondary" onClick={() => downloadResponse("/api/audit/export?format=csv", "amygdala-audit.csv", ADMIN_TOKEN)}>Export audit log (CSV)</button></div>
+
+      <div className="security-grid">
+        <section className="panel security-card"><div className="panel-header"><div><span className="tiny-label">Single sign-on</span><h2>SSO &amp; provisioning</h2></div><StatusPill value="Configurable" /></div><div className="security-body">
+          <div><small>Protocol</small><strong>{String(config?.identity.sso.protocol ?? "SAML 2.0 / OIDC")}</strong></div>
+          <div><small>Default connection</small><strong>{String(config?.identity.sso.defaultConnection ?? "Okta (SAML)")}</strong></div>
+          <div><small>Provisioning</small><strong>{String(config?.identity.scim.protocol ?? "SCIM 2.0")} · deprovision on removal</strong></div>
+          <div><small>Session</small><strong>Idle {String(config?.identity.session.idleTimeoutMinutes ?? 30)}m · MFA at IdP</strong></div>
+        </div></section>
+
+        <section className="panel security-card"><div className="panel-header"><div><span className="tiny-label">Data protection</span><h2>Residency &amp; isolation</h2></div><StatusPill value="Verified" /></div><div className="security-body">
+          <div><small>Tenant isolation</small><strong>Row-scoped by organisationId on every query</strong></div>
+          <div><small>Encryption</small><strong>AES-256 at rest · TLS 1.2+ in transit</strong></div>
+          <div><small>Regions</small><strong>{(config?.identity.dataResidency.regions as string[] | undefined)?.join(", ").toUpperCase() ?? "EU, US"}</strong></div>
+          <div><small>Compliance</small><strong>{(config?.identity.compliance ?? ["SOC 2 (target)", "ISO 27001 (target)", "GDPR"]).join(" · ")}</strong></div>
+        </div></section>
+      </div>
+
+      <section className="panel adapter-card"><div className="panel-header"><div><span className="tiny-label">AI adapter</span><h2>Grounded model boundary</h2></div><StatusPill value={config?.adapter.mode === "live" ? "Verified" : "Approved"} /></div><div className="security-body adapter-body">
+        <div><small>Active adapter</small><strong>{config?.adapter.name ?? "deterministic-grounded"}</strong></div>
+        <div><small>Credentialed</small><strong>{config?.adapter.credentialed ? "Yes (server-side)" : "No — credential-free"}</strong></div>
+        <div><small>Retrieval boundary</small><strong>{config?.adapter.retrievalBoundary ?? "Approved + Published, tenant-isolated"}</strong></div>
+        <div><small>Response contract</small><strong>{config?.adapter.responseContract ?? "status + answer + citations + escalation"}</strong></div>
+      </div></section>
+
+      <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Role-based access control</span><h2>Capability matrix</h2></div></div><div className="table-scroll"><table><thead><tr><th>Capability</th>{roles.map((role) => <th key={role}>{role}</th>)}</tr></thead><tbody>
+        {actions.map((action) => <tr key={action}><td><strong>{action}</strong></td>{roles.map((role) => <td key={role}>{capabilities[role].includes(action) ? <span className="rbac-yes">✓</span> : <span className="rbac-no">—</span>}</td>)}</tr>)}
+      </tbody></table></div></section>
+    </div>
+  );
+}
+
+// Rec 5: governance — eval harness + content lifecycle re-verification.
+type EvalReport = { total: number; passed: number; allPassed: boolean; metrics: { groundingRate: number; refusalAccuracy: number; injectionBlockRate: number; citationCoverage: number }; results: Array<{ id: string; query: string; expected: string; status: string; reason: string; passed: boolean; citation: Citation | null }> };
+type ReverificationItem = { sourceId: string; module: string; change: string; from: string; to: string | null; affected: Array<{ type: string; id: string; title: string }>; action: string; priority: string };
+
+function GovernanceConsole() {
+  const [report, setReport] = useState<EvalReport | null>(null);
+  const [plan, setPlan] = useState<ReverificationItem[] | null>(null);
+  const [running, setRunning] = useState(false);
+
+  async function loadEval(): Promise<EvalReport> {
+    try {
+      const response = await fetch("/api/governance/eval", { headers: { "x-identity-token": ADMIN_TOKEN } });
+      return (await response.json()) as EvalReport;
+    } catch {
+      return runGroundingEval() as unknown as EvalReport;
+    }
+  }
+
+  function runEval() {
+    setRunning(true);
+    loadEval().then((result) => { setReport(result); setRunning(false); });
+  }
+
+  useEffect(() => {
+    let active = true;
+    loadEval().then((result) => { if (active) setReport(result); });
+    fetch("/api/governance/reverification", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then((data) => { if (active) setPlan(data.plan); }).catch(() => { if (active) setPlan(planContentReverification() as unknown as ReverificationItem[]); });
+    return () => { active = false; };
+  }, []);
+
+  return (
+    <div className="page-content">
+      <div className="page-heading"><div><span className="eyebrow">Model &amp; content governance</span><h1>Governance</h1><p>Measure grounding behaviour, block prompt injection, and keep published training verified against current sources.</p></div>
+        <button className="button button-secondary" onClick={runEval} disabled={running}>{running ? "Running…" : "Re-run eval harness"}</button></div>
+
+      <div className="metric-grid">
+        <MetricCard label="Grounding rate" value={report ? percent(report.metrics.groundingRate) : "—"} change="Verified answers cite approved evidence" />
+        <MetricCard label="Refusal accuracy" value={report ? percent(report.metrics.refusalAccuracy) : "—"} change="Out-of-scope questions refused" tone="violet" />
+        <MetricCard label="Injection blocked" value={report ? percent(report.metrics.injectionBlockRate) : "—"} change="Prompt-injection attempts stopped" tone="green" />
+        <MetricCard label="Citation coverage" value={report ? percent(report.metrics.citationCoverage) : "—"} change="Grounded answers with a source" tone="amber" />
+      </div>
+
+      <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Eval harness</span><h2>Per-case grounding results</h2></div>{report && <StatusPill value={report.allPassed ? "Verified" : "Review recommended"} />}</div><div className="table-scroll"><table><thead><tr><th>Case</th><th>Expected</th><th>Status</th><th>Reason</th><th>Result</th></tr></thead><tbody>
+        {(report?.results ?? []).map((result) => <tr key={result.id}><td><strong>{result.query}</strong></td><td>{result.expected}</td><td><StatusPill value={result.status} /></td><td>{result.reason}</td><td>{result.passed ? <span className="rbac-yes">✓ pass</span> : <span className="rbac-no">✗ fail</span>}</td></tr>)}
+      </tbody></table></div></section>
+
+      <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Content lifecycle</span><h2>Re-verification queue</h2></div></div><div className="table-scroll"><table><thead><tr><th>Source</th><th>Change</th><th>Version</th><th>Affected training</th><th>Priority</th></tr></thead><tbody>
+        {(plan ?? []).map((item) => <tr key={item.sourceId}><td><strong>{item.sourceId}</strong><span>{item.module}</span></td><td>{item.change}</td><td>{item.from} → {item.to ?? "current"}</td><td>{item.affected.length > 0 ? item.affected.map((entry) => entry.title).join(", ") : "None"}</td><td><StatusPill value={item.priority === "High" ? "Support" : "Approved"} /></td></tr>)}
+        {plan?.length === 0 && <tr><td colSpan={5}>No superseded sources. Published training is current.</td></tr>}
+      </tbody></table></div></section>
+    </div>
+  );
+}
+
+// Rec 4: LMS/LRS integrations and standards exports.
+function IntegrationsConsole() {
+  const connectors = listIntegrationConnectors() as Array<{ id: string; name: string; protocol: string; direction: string; status: string }>;
+  const [xapiPreview, setXapiPreview] = useState<string>("");
+  useEffect(() => {
+    fetch("/api/integrations/xapi?learner=Aisha%20Naidoo", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then((data) => setXapiPreview(JSON.stringify(data.statements?.[3] ?? data, null, 2))).catch(() => setXapiPreview(""));
+  }, []);
+
+  return (
+    <div className="page-content">
+      <div className="page-heading"><div><span className="eyebrow">Systems of record</span><h1>Integrations</h1><p>Push verified readiness into enterprise LMS and LRS platforms with standards-based exports.</p></div>
+        <div className="page-actions">
+          <button className="button button-secondary" onClick={() => downloadResponse("/api/integrations/scorm", "imsmanifest.xml", ADMIN_TOKEN)}>Export SCORM manifest</button>
+          <button className="button button-primary" onClick={() => downloadResponse("/api/integrations/xapi?learner=Aisha%20Naidoo", "amygdala-xapi.json", ADMIN_TOKEN)}>Export xAPI statements</button>
+        </div>
+      </div>
+      <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Connector catalogue</span><h2>LMS &amp; LRS</h2></div></div><div className="table-scroll"><table><thead><tr><th>Connector</th><th>Protocol</th><th>Direction</th><th>Status</th></tr></thead><tbody>
+        {connectors.map((connector) => <tr key={connector.id}><td><strong>{connector.name}</strong></td><td>{connector.protocol}</td><td>{connector.direction}</td><td><StatusPill value={connector.status === "Available" ? "Verified" : "Approved"} /></td></tr>)}
+      </tbody></table></div></section>
+      <section className="panel xapi-preview"><div className="panel-header"><div><span className="tiny-label">xAPI statement</span><h2>Readiness achieved (sample)</h2></div></div><pre className="code-preview">{xapiPreview || "Loading xAPI preview…"}</pre></section>
+    </div>
+  );
+}
+
+// Rec 4: analytics page = existing insights + live documentation-gap
+// intelligence and the configurable competency model.
+function AnalyticsPage() {
+  const [gaps, setGaps] = useState<Array<{ topic: string; count: number; status: string; recommendation: string; organisations: string[] }>>([]);
+  const [modelId, setModelId] = useState(defaultCompetencyModel.id);
+  useEffect(() => {
+    fetch("/api/analytics/gaps", { headers: { "x-identity-token": ADMIN_TOKEN } }).then((response) => response.json()).then((data) => setGaps(data.gaps ?? [])).catch(() => setGaps([]));
+  }, []);
+  const models = competencyModels as Array<{ id: string; name: string; weights: { learning: number; simulation: number; assessment: number }; passThreshold: number }>;
+  const model = models.find((item) => item.id === modelId) ?? models[0];
+
+  return (
+    <>
+      <Analytics />
+      <div className="page-content analytics-live">
+        <div className="dashboard-grid">
+          <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Live intelligence</span><h2>Documentation gap ranking</h2></div><StatusPill value="Suggestions" /></div><div className="table-scroll"><table><thead><tr><th>Topic</th><th>Signal</th><th>Asks</th><th>Recommended action</th></tr></thead><tbody>
+            {gaps.map((gap) => <tr key={gap.topic}><td><strong>{gap.topic}</strong><span>{gap.organisations.join(", ")}</span></td><td><StatusPill value={gap.status} /></td><td>{gap.count}</td><td>{gap.recommendation}</td></tr>)}
+            {gaps.length === 0 && <tr><td colSpan={4}>No open documentation gaps.</td></tr>}
+          </tbody></table></div></section>
+          <section className="panel competency-card"><div className="panel-header"><div><span className="tiny-label">Configurable readiness</span><h2>Competency model</h2></div></div><div className="security-body">
+            <label className="studio-field"><span className="tiny-label">Model</span><select aria-label="Choose competency model" value={modelId} onChange={(event) => setModelId(event.target.value)}>{models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <div className="weight-row"><span>Learning</span><b>{percent(model.weights.learning)}</b></div>
+            <div className="weight-row"><span>Simulation</span><b>{percent(model.weights.simulation)}</b></div>
+            <div className="weight-row"><span>Assessment</span><b>{percent(model.weights.assessment)}</b></div>
+            <div className="weight-row"><span>Pass threshold</span><b>{model.passThreshold}%</b></div>
+            <p className="model-note">Weights stay visible to learners and managers. AI never changes the formula.</p>
+          </div></section>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function AdminApp({ path, setPath }: { path: string; setPath: (path: string) => void }) {
   let content: React.ReactNode;
   if (path === "/admin/command-centre") content = <CommandCentre />;
   else if (path === "/admin/knowledge-vault" || path === "/admin/content-review") content = <KnowledgeVault />;
   else if (path === "/admin/ai-activity") content = <AIActivity />;
-  else if (path === "/admin/analytics") content = <Analytics />;
-  else if (path === "/admin/programmes" || path === "/admin/training-studio") content = <Programmes />;
+  else if (path === "/admin/analytics") content = <AnalyticsPage />;
+  else if (path === "/admin/training-studio") content = <AuthoringStudio />;
+  else if (path === "/admin/governance") content = <GovernanceConsole />;
+  else if (path === "/admin/integrations") content = <IntegrationsConsole />;
+  else if (path === "/admin/workspace-settings") content = <IdentitySecurity />;
+  else if (path === "/admin/programmes") content = <Programmes />;
   else content = <PlaceholderAdmin path={path} />;
   return <Shell mode="admin" path={path} setPath={setPath}>{content}</Shell>;
 }
@@ -376,7 +678,7 @@ function GuidePresence({ loading, status }: { loading: boolean; status?: GuideRe
   return <div className={`guide-presence ${state}`} role="status" aria-live="polite"><div className="hologram-orb"><span>AI</span><i /><b /></div><span><strong>{label}</strong><small>{loading ? "Tracing approved source connections" : status ? "Grounding state updated" : "Grounded to NexusFlow 4.2"}</small></span></div>;
 }
 
-function ProductGuide() {
+function ProductGuide({ captions = true }: { captions?: boolean }) {
   const [mode, setMode] = useState<GuideMode>("explain");
   const [query, setQuery] = useState("How do I create my first project?");
   const [result, setResult] = useState<GuideResult | null>(null);
@@ -392,25 +694,30 @@ function ProductGuide() {
       setResult(answerGroundedQuestion({ query: question, mode, organisationId: "org-nexus", role: "Project Manager", module: "Creating a project" }) as GuideResult);
     } finally { setLoading(false); }
   }
-  return <div className="page-content guide-page"><div className="page-heading"><div><span className="eyebrow">Grounded Product Guide</span><h1>Ask NexusFlow. Get authorised guidance.</h1><p>Answers use approved, published material for your role, module and product version.</p></div><div className="guide-presence-stack"><GuidePresence loading={loading} status={result?.status} /><div className="trust-chip"><span>✓</span><strong>Retrieval boundary active</strong><small>NexusFlow · v4.2 · Project Manager</small></div></div></div><div className="guide-layout"><section className="panel guide-chat"><div className="mode-toggle" role="group" aria-label="Answer mode"><button className={mode === "explain" ? "active" : ""} onClick={() => setMode("explain")}><span>⌁</span><strong>Explain this</strong><small>Concepts in plain language</small></button><button className={mode === "guide" ? "active" : ""} onClick={() => setMode("guide")}><span>→</span><strong>Guide me</strong><small>Exact approved procedure</small></button></div><div className="conversation"><div className="guide-message"><span className="guide-avatar">AI</span><div><small>Amygdala Product Guide</small><p>I’m here to help with the NexusFlow Project Manager pathway. I’ll only use vendor-approved material and will show you exactly where each factual instruction comes from.</p></div></div>{loading && <div className="thinking"><span /><span /><span /> Verifying approved evidence…</div>}{result && <div className="answer-card"><div className="answer-status"><StatusPill value={result.status} /><span>{result.status === "Verified" ? "Strong support found in approved material" : result.status === "Limited guidance" ? "Related approved material found" : "No sufficient approved material"}</span></div><div className="answer-body">{result.answer.split("\n").map((line, index) => line ? <p key={index}>{line}</p> : null)}</div>{result.citations.map((citation) => <div className="citation" key={citation.sourceId}><span>▣</span><span><small>Authorised source</small><strong>{citation.title}</strong><em>v{citation.version} · {citation.section}</em></span><button>View source →</button></div>)}<div className="feedback-row"><span>Was this helpful?</span>{["Helpful", "Not helpful", "Report an issue"].map((item) => <button key={item} className={feedback === item ? "selected" : ""} onClick={() => setFeedback(item)}>{item}</button>)}</div></div>}</div><form className="guide-composer" onSubmit={(event) => { event.preventDefault(); ask(); }}><label htmlFor="guide-question">Ask about this module</label><textarea id="guide-question" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={500} placeholder="Ask a product-specific question…" /><div><span>Answers are grounded in authorised sources.</span><button className="button button-primary" disabled={loading || query.trim().length < 3}>Ask guide <i>↑</i></button></div></form></section><aside className="panel guide-context"><span className="tiny-label">Current context</span><h2>Create a project</h2><div className="context-map"><span className="done">✓ Dashboard navigation</span><i /><span className="active">02 Creating a project</span><i /><span>03 Team collaboration</span></div><span className="tiny-label">Try asking</span>{["Guide me through creating a project", "What does a project template do?", "Does NexusFlow include payroll?"].map((item) => <button className="suggested-question" key={item} onClick={() => ask(item)}>{item}<span>→</span></button>)}<div className="context-boundary"><span>⊙</span><p><strong>Your content stays isolated.</strong> Searches never cross the NexusFlow knowledge boundary or customer workspace.</p></div></aside></div></div>;
+  return <div className="page-content guide-page"><div className="page-heading"><div><span className="eyebrow">Grounded Product Guide</span><h1>Ask NexusFlow. Get authorised guidance.</h1><p>Answers use approved, published material for your role, module and product version.</p></div><div className="guide-presence-stack"><GuidePresence loading={loading} status={result?.status} /><div className="trust-chip"><span>✓</span><strong>Retrieval boundary active</strong><small>NexusFlow · v4.2 · Project Manager</small></div></div></div><div className="guide-layout"><section className="panel guide-chat"><div className="mode-toggle" role="group" aria-label="Answer mode"><button className={mode === "explain" ? "active" : ""} onClick={() => setMode("explain")}><span>⌁</span><strong>Explain this</strong><small>Concepts in plain language</small></button><button className={mode === "guide" ? "active" : ""} onClick={() => setMode("guide")}><span>→</span><strong>Guide me</strong><small>Exact approved procedure</small></button></div><div className="conversation"><div className="guide-message"><span className="guide-avatar">AI</span><div><small>Amygdala Product Guide</small><p>I’m here to help with the NexusFlow Project Manager pathway. I’ll only use vendor-approved material and will show you exactly where each factual instruction comes from.</p></div></div>{loading && <div className="thinking"><span /><span /><span /> Verifying approved evidence…</div>}{result && <div className="answer-card"><div className="answer-status"><StatusPill value={result.status} /><span>{result.status === "Verified" ? "Strong support found in approved material" : result.status === "Limited guidance" ? "Related approved material found" : "No sufficient approved material"}</span></div><div className="answer-body">{result.answer.split("\n").map((line, index) => line ? <p key={index}>{line}</p> : null)}</div>{(() => { const cited = result.citations[0]; const citedSource = cited ? seededSources.find((source) => source.id === cited.sourceId) : undefined; return citedSource && Array.isArray(citedSource.procedure) && citedSource.procedure.length > 0 ? <div className="answer-visual"><span className="tiny-label">Immersive walkthrough</span><ProcedureDiagram steps={citedSource.procedure} title={citedSource.title} captions={captions} /></div> : null; })()}{result.citations.map((citation) => <div className="citation" key={citation.sourceId}><span>▣</span><span><small>Authorised source</small><strong>{citation.title}</strong><em>v{citation.version} · {citation.section}</em></span><button>View source →</button></div>)}<div className="feedback-row"><span>Was this helpful?</span>{["Helpful", "Not helpful", "Report an issue"].map((item) => <button key={item} className={feedback === item ? "selected" : ""} onClick={() => setFeedback(item)}>{item}</button>)}</div></div>}</div><form className="guide-composer" onSubmit={(event) => { event.preventDefault(); ask(); }}><label htmlFor="guide-question">Ask about this module</label><textarea id="guide-question" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={500} placeholder="Ask a product-specific question…" /><div><span>Answers are grounded in authorised sources.</span><button className="button button-primary" disabled={loading || query.trim().length < 3}>Ask guide <i>↑</i></button></div></form></section><aside className="panel guide-context"><span className="tiny-label">Current context</span><h2>Create a project</h2><div className="context-map"><span className="done">✓ Dashboard navigation</span><i /><span className="active">02 Creating a project</span><i /><span>03 Team collaboration</span></div><span className="tiny-label">Try asking</span>{["Guide me through creating a project", "What does a project template do?", "Does NexusFlow include payroll?"].map((item) => <button className="suggested-question" key={item} onClick={() => ask(item)}>{item}<span>→</span></button>)}<div className="context-boundary"><span>⊙</span><p><strong>Your content stays isolated.</strong> Searches never cross the NexusFlow knowledge boundary or customer workspace.</p></div></aside></div></div>;
 }
 
-function Simulator({ onComplete }: { onComplete: (score: number) => void }) {
+function Simulator({ onComplete, captions = true }: { onComplete: (score: number) => void; captions?: boolean }) {
   const [missionId, setMissionId] = useState("mission-project");
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState(0);
   const [guided, setGuided] = useState(true);
   const [complete, setComplete] = useState(false);
+  const [coaching, setCoaching] = useState("");
   const mission = missions.find((item) => item.id === missionId) ?? missions[0];
   function choose(label: string) {
     if (label === mission.steps[step]?.label) {
+      setCoaching("");
       if (step === mission.steps.length - 1) { setComplete(true); onComplete(Math.max(60, 100 - errors * 8)); }
       else setStep((value) => value + 1);
-    } else setErrors((value) => value + 1);
+    } else {
+      setErrors((value) => value + 1);
+      setCoaching(`That is not the approved next action. Follow step ${step + 1}: “${mission.steps[step]?.label}”.`);
+    }
   }
-  function selectMission(id: string) { setMissionId(id); setStep(0); setErrors(0); setComplete(false); }
+  function selectMission(id: string) { setMissionId(id); setStep(0); setErrors(0); setComplete(false); setCoaching(""); }
   const alternatives = ["Open Reports", "Archive workspace", "Change billing", "Delete project"];
-  return <div className="page-content simulator-page"><div className="page-heading"><div><span className="eyebrow">Safe Product Simulator</span><h1>Practise NexusFlow without production risk.</h1><p>Interactive missions use a fictional workspace and approved procedures.</p></div><div className="mode-selector"><button className={guided ? "active" : ""} onClick={() => setGuided(true)}>Guided</button><button className={!guided ? "active" : ""} onClick={() => setGuided(false)}>Independent</button></div></div><div className="mission-tabs">{missions.map((item, index) => <button key={item.id} className={mission.id === item.id ? "active" : ""} onClick={() => selectMission(item.id)}><span>0{index + 1}</span><strong>{item.title}</strong><small>{item.minutes} min</small></button>)}</div><div className="simulator-layout"><aside className="panel mission-brief"><span className="tiny-label">Mission objective</span><h2>{mission.title}</h2><p>{mission.objective}</p><div className="brief-meta"><span><small>Estimated time</small><strong>{mission.minutes} minutes</strong></span><span><small>Prerequisite</small><strong>{mission.prerequisite}</strong></span><span><small>Attempt</small><strong>#1 · {errors} errors</strong></span></div><div className="mission-steps">{mission.steps.map((item, index) => <div className={index < step || complete ? "done" : index === step ? "active" : ""} key={item.label}><span>{index < step || complete ? "✓" : index + 1}</span><strong>{item.label}</strong></div>)}</div>{guided && !complete && <div className="hint-card"><span>✦</span><p><strong>Progressive hint</strong>{mission.steps[step].hint}</p></div>}<div className="approved-ref"><span>▣</span><p><small>Approved reference</small><strong>{seededSources.find((source) => source.id === mission.sourceId)?.title}</strong></p></div></aside><section className="simulation-window"><div className="sim-browser"><div className="sim-browser-bar"><span><i /><i /><i /></span><strong>NexusFlow training workspace</strong><em>SIMULATION</em></div><div className="nexus-app"><nav><div className="nexus-logo">N</div>{["Dashboard", "Projects", "Team", "Workflows", "Reports"].map((item) => <button key={item} className={mission.steps[step]?.label.includes(item) ? "hotspot" : ""} onClick={() => choose(`Open ${item}`)}>{item.charAt(0)}<span>{item}</span></button>)}</nav><main><div className="nexus-top"><div><small>Aurora Creative / Training</small><h2>{mission.title}</h2></div><span className="fictional-chip">Fictional data</span></div>{complete ? <div className="simulation-success"><span>✓</span><h2>Mission complete</h2><p>You followed the approved procedure with {errors} {errors === 1 ? "error" : "errors"}.</p><strong>{Math.max(60, 100 - errors * 8)}% practical competency</strong><button className="button button-primary" onClick={() => selectMission(missions[(missions.indexOf(mission) + 1) % missions.length].id)}>Next mission →</button></div> : <div className="nexus-canvas"><div className="canvas-copy"><span className="tiny-label">Current action</span><h3>{mission.steps[step].label}</h3><p>Choose the correct control in this simulated NexusFlow workspace.</p></div><div className="sim-actions"><button className="correct-hotspot" onClick={() => choose(mission.steps[step].label)}><span>＋</span>{mission.steps[step].label}{guided && <i>Next approved action</i>}</button>{alternatives.slice(0, 2).map((item) => <button key={item} onClick={() => choose(item)}>{item}</button>)}</div><div className="fake-projects"><div><span className="skeleton-line wide" /><span className="skeleton-line" /><i /></div><div><span className="skeleton-line wide" /><span className="skeleton-line" /><i /></div><div><span className="skeleton-line wide" /><span className="skeleton-line" /><i /></div></div></div>}</main></div></div></section></div></div>;
+  return <div className="page-content simulator-page"><div className="page-heading"><div><span className="eyebrow">Safe Product Simulator</span><h1>Practise NexusFlow without production risk.</h1><p>Interactive missions use a fictional workspace and approved procedures.</p></div><div className="mode-selector"><button className={guided ? "active" : ""} onClick={() => setGuided(true)}>Guided</button><button className={!guided ? "active" : ""} onClick={() => setGuided(false)}>Independent</button></div></div><div className="mission-tabs">{missions.map((item, index) => <button key={item.id} className={mission.id === item.id ? "active" : ""} onClick={() => selectMission(item.id)}><span>0{index + 1}</span><strong>{item.title}</strong><small>{item.minutes} min</small></button>)}</div><div className="simulator-layout"><aside className="panel mission-brief"><span className="tiny-label">Mission objective</span><h2>{mission.title}</h2><p>{mission.objective}</p><div className="brief-meta"><span><small>Estimated time</small><strong>{mission.minutes} minutes</strong></span><span><small>Prerequisite</small><strong>{mission.prerequisite}</strong></span><span><small>Attempt</small><strong>#1 · {errors} errors</strong></span></div><div className="mission-steps">{mission.steps.map((item, index) => <div className={index < step || complete ? "done" : index === step ? "active" : ""} key={item.label}><span>{index < step || complete ? "✓" : index + 1}</span><strong>{item.label}</strong></div>)}</div>{guided && !complete && <div className="hint-card"><span>✦</span><p><strong>Progressive hint</strong>{mission.steps[step].hint}</p></div>}<div className="approved-ref"><span>▣</span><p><small>Approved reference</small><strong>{seededSources.find((source) => source.id === mission.sourceId)?.title}</strong></p></div><div className="mission-visual"><span className="tiny-label">Visual walkthrough</span><ProcedureDiagram steps={mission.steps.map((item) => item.label)} title={mission.title} accent="violet" captions={captions} /></div></aside><section className="simulation-window"><div className="sim-browser"><div className="sim-browser-bar"><span><i /><i /><i /></span><strong>NexusFlow training workspace</strong><em>SIMULATION</em></div><div className="nexus-app"><nav><div className="nexus-logo">N</div>{["Dashboard", "Projects", "Team", "Workflows", "Reports"].map((item) => <button key={item} className={mission.steps[step]?.label.includes(item) ? "hotspot" : ""} onClick={() => choose(`Open ${item}`)}>{item.charAt(0)}<span>{item}</span></button>)}</nav><main><div className="nexus-top"><div><small>Aurora Creative / Training</small><h2>{mission.title}</h2></div><span className="fictional-chip">Fictional data</span></div>{complete ? <div className="simulation-success"><span>✓</span><h2>Mission complete</h2><p>You followed the approved procedure with {errors} {errors === 1 ? "error" : "errors"}.</p><strong>{Math.max(60, 100 - errors * 8)}% practical competency</strong><button className="button button-primary" onClick={() => selectMission(missions[(missions.indexOf(mission) + 1) % missions.length].id)}>Next mission →</button></div> : <div className="nexus-canvas"><div className="canvas-copy"><span className="tiny-label">Current action</span><h3>{mission.steps[step].label}</h3><p>Choose the correct control in this simulated NexusFlow workspace.</p></div><div className="sim-actions"><button className="correct-hotspot" onClick={() => choose(mission.steps[step].label)}><span>＋</span>{mission.steps[step].label}{guided && <i>Next approved action</i>}</button>{alternatives.slice(0, 2).map((item) => <button key={item} onClick={() => choose(item)}>{item}</button>)}</div>{coaching && <div className="sim-coaching" role="alert"><span>!</span><p>{coaching}</p></div>}<div className="fake-projects"><div><span className="skeleton-line wide" /><span className="skeleton-line" /><i /></div><div><span className="skeleton-line wide" /><span className="skeleton-line" /><i /></div><div><span className="skeleton-line wide" /><span className="skeleton-line" /><i /></div></div></div>}</main></div></div></section></div></div>;
 }
 
 function Assessment({ simulationScore, onComplete }: { simulationScore: number; onComplete: (score: number) => void }) {
@@ -437,21 +744,63 @@ function Results({ simulationScore, assessmentScore, setPath }: { simulationScor
   return <div className="page-content results-page"><div className="results-hero"><div className="result-glow" /><span className="eyebrow">Verified readiness result</span><ProgressRing value={readiness} label="Overall readiness" /><h1>{readiness >= 80 ? "Ready for confident NexusFlow use." : "On track—complete the recommended practice."}</h1><p>Your result combines observed learning, simulation competence and the final knowledge assessment.</p><StatusPill value={readiness >= 80 ? "Ready for access" : "On track"} /></div><SkillsConstellation readiness={readiness} /><div className="result-breakdown"><article><span className="result-weight">30%</span><strong>Learning completion</strong><b>82%</b><progress value="82" max="100" /><small>4 of 5 modules complete</small></article><article><span className="result-weight">40%</span><strong>Simulation competency</strong><b>{simulationScore}%</b><progress value={simulationScore} max="100" /><small>Practical mission performance</small></article><article><span className="result-weight">30%</span><strong>Final assessment</strong><b>{assessmentScore}%</b><progress value={assessmentScore} max="100" /><small>Pass threshold: 80%</small></article></div><div className="formula-banner"><span>Transparent calculation</span><strong>(82 × 0.30) + ({simulationScore} × 0.40) + ({assessmentScore} × 0.30) = {readiness}%</strong><em>AI cannot change this formula.</em></div><div className="result-actions"><button className="button button-secondary" onClick={() => navigate("/learner/onboarding", setPath)}>Review pathway</button><button className="button button-primary" onClick={() => navigate("/learner/certificate", setPath)}>View certificate →</button></div></div>;
 }
 
+type VerificationResult = { valid: boolean; reason: string; expired?: boolean; recertifyDue?: boolean; credentialCode?: string; subject?: string };
+
 function Certificate() {
-  function download() {
-    const text = `AMYGDALA PROTOTYPE CERTIFICATE\n\nThis certifies that Aisha Naidoo demonstrated NexusFlow Project Manager readiness in the Amygdala interactive demo.\n\nLearning 82% · Simulation 92% · Assessment 100% · Overall readiness 91%\nIssued 13 August 2026 · Demo credential AMY-NF-0042`;
-    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = "amygdala-nexusflow-certificate.txt"; anchor.click(); URL.revokeObjectURL(url);
+  const credential = useMemo(() => issueCredential({ learner: "Aisha Naidoo", organisation: "Aurora Creative", readiness: 91, breakdown: { learning: 82, simulation: 92, assessment: 100 } }), []);
+  const subject = credential.credentialSubject;
+  const [verification, setVerification] = useState<VerificationResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
+
+  async function verify() {
+    setVerifying(true);
+    try {
+      const response = await fetch("/api/credentials/verify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ credential }) });
+      setVerification((await response.json()) as VerificationResult);
+    } catch {
+      setVerification(verifyCredential(credential, { now: new Date().toISOString() }) as VerificationResult);
+    } finally {
+      setVerifying(false);
+    }
   }
-  return <div className="page-content certificate-page"><div className="certificate"><div className="certificate-border"><Brand /><span className="certificate-kicker">Certificate of product readiness</span><h1>Aisha Naidoo</h1><p>has demonstrated practical and knowledge readiness for the</p><h2>NexusFlow Project Manager pathway</h2><div className="certificate-score"><strong>91%</strong><span>Verified readiness</span></div><div className="certificate-meta"><span><small>Issued</small><strong>13 August 2026</strong></span><span><small>Credential</small><strong>AMY-NF-0042</strong></span><span><small>Workspace</small><strong>Aurora Creative</strong></span></div><em>Prototype demonstration credential · not a production certification</em></div></div><button className="button button-primary" onClick={download}>Download prototype certificate ↓</button></div>;
+
+  return (
+    <div className="page-content certificate-page">
+      <div className="certificate"><div className="certificate-border">
+        <Brand />
+        <span className="certificate-kicker">Verifiable readiness credential</span>
+        <h1>{subject.name}</h1>
+        <p>has demonstrated practical and knowledge readiness for the</p>
+        <h2>{subject.programme}</h2>
+        <div className="certificate-score"><strong>{subject.readiness}%</strong><span>Verified readiness</span></div>
+        <div className="certificate-meta">
+          <span><small>Issued</small><strong>{credential.issuanceDate.slice(0, 10)}</strong></span>
+          <span><small>Credential</small><strong>{subject.credentialCode}</strong></span>
+          <span><small>Recertify by</small><strong>{credential.recertifyBy.slice(0, 10)}</strong></span>
+        </div>
+        <em>{credential.prototypeNotice}</em>
+      </div></div>
+      <div className="credential-actions">
+        <button className="button button-secondary" onClick={() => downloadJson("amygdala-nexusflow-credential.json", credential)}>Download verifiable credential (JSON) ↓</button>
+        <button className="button button-primary" onClick={verify} disabled={verifying}>{verifying ? "Verifying…" : "Verify credential"}</button>
+      </div>
+      {verification && (
+        <div className={`credential-result ${verification.valid ? "valid" : "invalid"}`} role="status">
+          <span>{verification.valid ? "✓" : "✗"}</span>
+          <div><strong>{verification.valid ? "Credential verified" : "Verification failed"}</strong><small>Signature {verification.reason} · {subject.credentialCode}{verification.recertifyDue ? " · recertification due" : ""}</small></div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function OnboardingOverview({ setPath }: { setPath: (path: string) => void }) {
-  return <div className="page-content"><div className="page-heading"><div><span className="eyebrow">Your assigned journey</span><h1>NexusFlow Project Manager pathway</h1><p>Learn the approved foundations, practise three workflows and validate readiness.</p></div><StatusPill value="In progress" /></div><div className="programme-layout"><section className="panel module-stack"><div className="panel-header"><div><span className="tiny-label">Recommended sequence</span><h2>Standard pathway</h2></div><span className="environment-chip"><i /> 42% complete</span></div>{modules.map((module, index) => <article key={module.id}><span className="module-order">0{index + 1}</span><span className={`module-symbol ${module.label.toLowerCase()}`}>{module.progress === 100 ? "✓" : module.label === "Practise" ? "◇" : "◫"}</span><span><small>{module.label} · {module.duration} min</small><strong>{module.title}</strong><progress value={module.progress} max="100" /></span><button onClick={() => navigate(module.label === "Practise" ? "/learner/simulator" : "/learner/guide", setPath)}>→</button></article>)}</section><aside className="panel programme-summary"><span className="tiny-label">Why this pathway?</span><h2>Diagnostic rules, made visible.</h2><p>Your 4/5 diagnostic result assigned the standard pathway. Mandatory simulations and the 80% pass threshold stay fixed.</p><div className="why-card"><strong>Recommended next action</strong><span>Complete the Create your first project mission.</span></div><button className="button button-primary full-width" onClick={() => navigate("/learner/simulator", setPath)}>Start mission →</button></aside></div></div>;
+function OnboardingOverview({ setPath, captions = true }: { setPath: (path: string) => void; captions?: boolean }) {
+  const createSteps = seededSources.find((source) => source.id === "src-projects")?.procedure ?? [];
+  return <div className="page-content"><div className="page-heading"><div><span className="eyebrow">Your assigned journey</span><h1>NexusFlow Project Manager pathway</h1><p>Learn the approved foundations, practise three workflows and validate readiness.</p></div><StatusPill value="In progress" /></div><div className="programme-layout"><section className="panel module-stack"><div className="panel-header"><div><span className="tiny-label">Recommended sequence</span><h2>Standard pathway</h2></div><span className="environment-chip"><i /> 42% complete</span></div>{modules.map((module, index) => <article key={module.id}><span className="module-order">0{index + 1}</span><span className={`module-symbol ${module.label.toLowerCase()}`}>{module.progress === 100 ? "✓" : module.label === "Practise" ? "◇" : "◫"}</span><span><small>{module.label} · {module.duration} min</small><strong>{module.title}</strong><progress value={module.progress} max="100" /></span><button onClick={() => navigate(module.label === "Practise" ? "/learner/simulator" : "/learner/guide", setPath)}>→</button></article>)}</section><aside className="panel programme-summary"><span className="tiny-label">Why this pathway?</span><h2>Diagnostic rules, made visible.</h2><p>Your 4/5 diagnostic result assigned the standard pathway. Mandatory simulations and the 80% pass threshold stay fixed.</p><div className="why-card"><strong>Recommended next action</strong><span>Complete the Create your first project mission.</span></div><div className="onboarding-visual"><span className="tiny-label">Approved procedure preview</span><ProcedureDiagram steps={createSteps} title="Create a project" captions={captions} /></div><button className="button button-primary full-width" onClick={() => navigate("/learner/simulator", setPath)}>Start mission →</button></aside></div></div>;
 }
 
-function AccessibilitySettings({ reduced, setReduced, lowPerformance, setLowPerformance, twoD, setTwoD }: { reduced: boolean; setReduced: (value: boolean) => void; lowPerformance: boolean; setLowPerformance: (value: boolean) => void; twoD: boolean; setTwoD: (value: boolean) => void }) {
-  const settings = [["Reduced motion", "Stops spatial transitions and decorative movement.", reduced, setReduced], ["Low-performance mode", "Reduces atmospheric effects for older devices.", lowPerformance, setLowPerformance], ["Complete 2D view", "Replaces the spatial map with flat module relationships.", twoD, setTwoD]] as const;
+function AccessibilitySettings({ reduced, setReduced, lowPerformance, setLowPerformance, twoD, setTwoD, captions, setCaptions }: { reduced: boolean; setReduced: (value: boolean) => void; lowPerformance: boolean; setLowPerformance: (value: boolean) => void; twoD: boolean; setTwoD: (value: boolean) => void; captions: boolean; setCaptions: (value: boolean) => void }) {
+  const settings = [["Reduced motion", "Stops spatial transitions and decorative movement.", reduced, setReduced], ["Low-performance mode", "Reduces atmospheric effects for older devices.", lowPerformance, setLowPerformance], ["Complete 2D view", "Replaces the spatial map with flat module relationships.", twoD, setTwoD], ["Captions & transcripts", "Expands text captions and transcripts beneath every visual walkthrough.", captions, setCaptions]] as const;
   return <div className="page-content"><div className="page-heading"><div><span className="eyebrow">Personal accessibility</span><h1>Choose how the learning universe behaves.</h1><p>These device-only preferences never change your pathway or readiness score.</p></div></div><section className="panel settings-panel">{settings.map(([title, copy, active, setter]) => <label key={title}><span><strong>{title}</strong><small>{copy}</small></span><input type="checkbox" aria-label={title} checked={active} onChange={(event) => setter(event.target.checked)} /><i /></label>)}</section><section className="panel accessibility-summary"><span>✓</span><p><strong>WCAG-conscious by default</strong> Keyboard navigation, visible focus, semantic labels, mobile touch targets and screen-reader alternatives are built into every demo journey.</p></section></div>;
 }
 
@@ -463,6 +812,7 @@ function LearnerApp({ path, setPath }: { path: string; setPath: (path: string) =
   const [reduced, setReduced] = useState(false);
   const [lowPerformance, setLowPerformance] = useState(false);
   const [twoD, setTwoD] = useState(false);
+  const [captions, setCaptions] = useState(true);
   useEffect(() => { document.documentElement.dataset.motion = reduced ? "reduced" : "full"; document.documentElement.dataset.performance = lowPerformance ? "low" : "full"; }, [reduced, lowPerformance]);
   if (path === "/learner/home" && entryStage !== "ready") {
     if (entryStage === "invite") return <Invitation onAccept={() => setEntryStage("diagnostic")} />;
@@ -471,13 +821,13 @@ function LearnerApp({ path, setPath }: { path: string; setPath: (path: string) =
   }
   let content: React.ReactNode;
   if (path === "/learner/home") content = <LearnerHome setPath={setPath} twoD={twoD} />;
-  else if (path === "/learner/onboarding") content = <OnboardingOverview setPath={setPath} />;
-  else if (path === "/learner/guide") content = <ProductGuide />;
-  else if (path === "/learner/simulator") content = <Simulator onComplete={setSimulationScore} />;
+  else if (path === "/learner/onboarding") content = <OnboardingOverview setPath={setPath} captions={captions} />;
+  else if (path === "/learner/guide") content = <ProductGuide captions={captions} />;
+  else if (path === "/learner/simulator") content = <Simulator onComplete={setSimulationScore} captions={captions} />;
   else if (path === "/learner/assessment") content = <Assessment simulationScore={simulationScore} onComplete={setAssessmentScore} />;
   else if (path === "/learner/results") content = <Results simulationScore={simulationScore} assessmentScore={assessmentScore} setPath={setPath} />;
   else if (path === "/learner/certificate") content = <Certificate />;
-  else content = <AccessibilitySettings reduced={reduced} setReduced={setReduced} lowPerformance={lowPerformance} setLowPerformance={setLowPerformance} twoD={twoD} setTwoD={setTwoD} />;
+  else content = <AccessibilitySettings reduced={reduced} setReduced={setReduced} lowPerformance={lowPerformance} setLowPerformance={setLowPerformance} twoD={twoD} setTwoD={setTwoD} captions={captions} setCaptions={setCaptions} />;
   return <Shell mode="learner" path={path} setPath={setPath}>{content}</Shell>;
 }
 
