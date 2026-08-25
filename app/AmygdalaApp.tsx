@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   SAFE_FALLBACK,
@@ -67,6 +67,55 @@ type GuideResult = {
 };
 
 type DemoSource = (typeof seededSources)[number] & { local?: boolean };
+
+const ImmersiveUniverse = lazy(() => import("./ImmersiveUniverse"));
+
+// Opt-in immersive 3D/VR scene. Three.js is only fetched when opened, so it
+// never affects first paint. Respects the app's motion/performance toggles by
+// being user-initiated rather than autoplaying.
+function ImmersiveLauncher({ label = "Explore in 3D / VR", tone = "secondary" }: { label?: string; tone?: "primary" | "secondary" }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className={`button button-${tone} immersive-launch`} onClick={() => setOpen(true)}><span aria-hidden="true">◈</span> {label}</button>
+      {open && (
+        <Suspense fallback={<div className="immersive-overlay immersive-loading"><span>Loading immersive universe…</span></div>}>
+          <ImmersiveUniverse onClose={() => setOpen(false)} />
+        </Suspense>
+      )}
+    </>
+  );
+}
+
+// Animated count-up for metric values; skips when reduced motion is on.
+function useCountUp(value: string) {
+  const [display, setDisplay] = useState(value);
+  useEffect(() => {
+    const match = String(value).match(/^(\D*)(\d[\d,]*\.?\d*)(.*)$/);
+    if (!match || (typeof document !== "undefined" && document.documentElement.dataset.motion === "reduced")) {
+      const id = requestAnimationFrame(() => setDisplay(value));
+      return () => cancelAnimationFrame(id);
+    }
+    const prefix = match[1];
+    const target = parseFloat(match[2].replace(/,/g, ""));
+    const suffix = match[3];
+    const decimals = (match[2].split(".")[1] || "").length;
+    const start = performance.now();
+    const duration = 900;
+    let raf = 0;
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = (target * eased).toFixed(decimals);
+      setDisplay(`${prefix}${Number(current).toLocaleString(undefined, { minimumFractionDigits: decimals })}${suffix}`);
+      if (progress < 1) raf = requestAnimationFrame(tick);
+      else setDisplay(value);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [value]);
+  return display;
+}
 
 const adminNavigation = [
   ["/admin/command-centre", "Command Centre", "◫"],
@@ -198,6 +247,7 @@ function Landing({ path, setPath }: { path: string; setPath: (path: string) => v
             <div className="hero-actions">
               <button className="button button-primary" onClick={() => navigate("/demo", setPath)}>Enter Interactive Demo <span>→</span></button>
               <button className="button button-secondary" onClick={() => document.querySelector("#universe")?.scrollIntoView({ behavior: "smooth" })}>Explore the Training Universe</button>
+              <ImmersiveLauncher label="Enter the 3D universe" />
             </div>
             <div className="trust-row">
               <span><i>✓</i> Approved sources only</span>
@@ -303,7 +353,8 @@ function Shell({ mode, path, setPath, children }: { mode: "admin" | "learner"; p
 }
 
 function MetricCard({ label, value, change, tone = "cyan" }: { label: string; value: string; change: string; tone?: string }) {
-  return <article className="metric-card"><span className={`metric-icon ${tone}`}>{tone === "cyan" ? "↗" : tone === "violet" ? "◎" : tone === "amber" ? "!" : "✓"}</span><span className="metric-label">{label}</span><strong>{value}</strong><small>{change}</small></article>;
+  const shown = useCountUp(value);
+  return <article className="metric-card"><span className={`metric-icon ${tone}`}>{tone === "cyan" ? "↗" : tone === "violet" ? "◎" : tone === "amber" ? "!" : "✓"}</span><span className="metric-label">{label}</span><strong>{shown}</strong><small>{change}</small></article>;
 }
 
 function CommandCentre() {
@@ -757,7 +808,7 @@ function PathwayReveal({ score, onContinue }: { score: number; onContinue: () =>
 }
 
 function LearnerHome({ setPath, twoD }: { setPath: (path: string) => void; twoD: boolean }) {
-  return <div className="page-content learner-home"><div className="learner-welcome"><div><span className="eyebrow">Project Manager pathway</span><h1>Continue building NexusFlow capability.</h1><p>You’re 42% through the mandatory pathway. Your next step is a safe project-creation mission.</p><button className="button button-primary" onClick={() => navigate("/learner/simulator", setPath)}>Continue mission <span>→</span></button></div><ProgressRing value={42} label="Pathway completion" /></div><div className="learning-universe-panel"><UniverseVisual twoD={twoD} /><div className="universe-caption"><span className="environment-chip"><i /> Pathway active</span><strong>Product Learning Universe</strong><small>Use the cards below for a complete 2D alternative.</small></div></div><div className="module-card-grid">{modules.map((module, index) => <article key={module.id} className={module.progress === 0 ? "locked" : ""}><span className={`module-symbol ${module.label.toLowerCase()}`}>{module.progress === 100 ? "✓" : `0${index + 1}`}</span><span className="module-card-copy"><small>{module.label} · {module.duration} min</small><strong>{module.title}</strong><progress value={module.progress} max="100" /><em>{module.progress === 100 ? "Complete" : module.progress > 0 ? `${module.progress}% complete` : "Next in pathway"}</em></span><button onClick={() => navigate(module.label === "Practise" ? "/learner/simulator" : "/learner/onboarding", setPath)} aria-label={`Open ${module.title}`}>→</button></article>)}</div></div>;
+  return <div className="page-content learner-home"><div className="learner-welcome"><div><span className="eyebrow">Project Manager pathway</span><h1>Continue building NexusFlow capability.</h1><p>You’re 42% through the mandatory pathway. Your next step is a safe project-creation mission.</p><button className="button button-primary" onClick={() => navigate("/learner/simulator", setPath)}>Continue mission <span>→</span></button></div><ProgressRing value={42} label="Pathway completion" /></div><div className="learning-universe-panel"><UniverseVisual twoD={twoD} /><div className="universe-caption"><span className="environment-chip"><i /> Pathway active</span><strong>Product Learning Universe</strong><small>Use the cards below for a complete 2D alternative.</small></div><div className="universe-immersive-cta"><ImmersiveLauncher label="Enter immersive view" /></div></div><div className="module-card-grid">{modules.map((module, index) => <article key={module.id} className={module.progress === 0 ? "locked" : ""}><span className={`module-symbol ${module.label.toLowerCase()}`}>{module.progress === 100 ? "✓" : `0${index + 1}`}</span><span className="module-card-copy"><small>{module.label} · {module.duration} min</small><strong>{module.title}</strong><progress value={module.progress} max="100" /><em>{module.progress === 100 ? "Complete" : module.progress > 0 ? `${module.progress}% complete` : "Next in pathway"}</em></span><button onClick={() => navigate(module.label === "Practise" ? "/learner/simulator" : "/learner/onboarding", setPath)} aria-label={`Open ${module.title}`}>→</button></article>)}</div></div>;
 }
 
 function GuidePresence({ loading, status }: { loading: boolean; status?: GuideResult["status"] }) {
@@ -992,6 +1043,32 @@ export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: strin
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); (document.querySelector("input[type='search'], .search-field input") as HTMLInputElement | null)?.focus(); }
     };
     window.addEventListener("keydown", shortcut); return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+  useEffect(() => {
+    const isLowPerf = () => document.documentElement.dataset.performance === "low";
+    const isReduced = () => document.documentElement.dataset.motion === "reduced";
+    const onMove = (event: PointerEvent) => {
+      // Cursor-follow lighting on glass panels.
+      const panel = (event.target as HTMLElement | null)?.closest?.(".panel") as HTMLElement | null;
+      if (panel && !isLowPerf()) {
+        const rect = panel.getBoundingClientRect();
+        panel.style.setProperty("--mx", `${((event.clientX - rect.left) / rect.width) * 100}%`);
+        panel.style.setProperty("--my", `${((event.clientY - rect.top) / rect.height) * 100}%`);
+      }
+      // Scene parallax.
+      if (!isReduced() && !isLowPerf()) {
+        document.documentElement.style.setProperty("--px", ((event.clientX / window.innerWidth) * 2 - 1).toFixed(3));
+        document.documentElement.style.setProperty("--py", ((event.clientY / window.innerHeight) * 2 - 1).toFixed(3));
+      }
+    };
+    const onTilt = (event: DeviceOrientationEvent) => {
+      if (isReduced() || isLowPerf()) return;
+      document.documentElement.style.setProperty("--px", Math.max(-1, Math.min(1, (event.gamma ?? 0) / 45)).toFixed(3));
+      document.documentElement.style.setProperty("--py", Math.max(-1, Math.min(1, ((event.beta ?? 0) - 45) / 45)).toFixed(3));
+    };
+    window.addEventListener("pointermove", onMove, { passive: true });
+    window.addEventListener("deviceorientation", onTilt);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("deviceorientation", onTilt); };
   }, []);
   const view = useMemo(() => path.startsWith("/admin") ? "admin" : path.startsWith("/learner") ? "learner" : path.startsWith("/signin") ? "signin" : path === "/demo" ? "demo" : "landing", [path]);
   if (view === "signin") return <SignIn setPath={setPath} />;
