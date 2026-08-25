@@ -93,7 +93,7 @@ export function generateCourseFromSource(source, options = {}) {
 
   const programme = {
     id: `prog-${base}`,
-    title: `${source.module} — grounded onboarding`,
+    title: `${source.module}: grounded onboarding`,
     role,
     status: "Draft",
     approvalStatus: "Pending",

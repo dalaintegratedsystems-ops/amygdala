@@ -232,7 +232,7 @@ function Landing({ path, setPath }: { path: string; setPath: (path: string) => v
           </div>
           <div className="split-copy">
             <span className="eyebrow">Vendor-controlled AI</span>
-            <h2>Answers your customers can trust—and your team can trace.</h2>
+            <h2>Answers your customers can trust, and your team can trace.</h2>
             <p>The Product Guide stays inside the vendor’s authorised material. Unsupported questions are refused and routed for human review.</p>
             <ul className="check-list"><li>Tenant-isolated retrieval</li><li>Source title, version and section on every factual answer</li><li>Draft, archived and superseded content excluded</li><li>No numeric confidence theatre</li></ul>
             <button className="text-button" onClick={() => navigate("/demo", setPath)}>Experience a verified answer <span>→</span></button>
@@ -240,7 +240,7 @@ function Landing({ path, setPath }: { path: string; setPath: (path: string) => v
         </section>
 
         <section className="section readiness-section" id="readiness">
-          <div className="section-heading"><span className="eyebrow">Transparent readiness</span><h2>See who can use the product—not just who finished a course.</h2><p>Learning, practical competence and assessment results combine in a visible, fixed formula.</p></div>
+          <div className="section-heading"><span className="eyebrow">Transparent readiness</span><h2>See who can use the product, not just who finished a course.</h2><p>Learning, practical competence and assessment results combine in a visible, fixed formula.</p></div>
           <div className="readiness-formula"><div><strong>30%</strong><span>Learning</span></div><b>+</b><div><strong>40%</strong><span>Simulation</span></div><b>+</b><div><strong>30%</strong><span>Assessment</span></div><b>=</b><div className="result"><strong>86%</strong><span>Ready</span></div></div>
         </section>
 
@@ -575,7 +575,7 @@ function IdentitySecurity() {
 
   return (
     <div className="page-content">
-      <div className="page-heading"><div><span className="eyebrow">Enterprise controls</span><h1>Identity &amp; security</h1><p>SSO, provisioning, role-based access, tenant isolation and the grounded AI adapter—configured for enterprise deployment.</p></div>
+      <div className="page-heading"><div><span className="eyebrow">Enterprise controls</span><h1>Identity &amp; security</h1><p>SSO, provisioning, role-based access, tenant isolation and the grounded AI adapter, configured for enterprise deployment.</p></div>
         <button className="button button-secondary" onClick={() => downloadResponse("/api/audit/export?format=csv", "amygdala-audit.csv")}>Export audit log (CSV)</button></div>
 
       <div className="security-grid">
@@ -596,13 +596,13 @@ function IdentitySecurity() {
 
       <section className="panel adapter-card"><div className="panel-header"><div><span className="tiny-label">AI adapter</span><h2>Grounded model boundary</h2></div><StatusPill value={config?.adapter.mode === "live" ? "Verified" : "Approved"} /></div><div className="security-body adapter-body">
         <div><small>Active adapter</small><strong>{config?.adapter.name ?? "deterministic-grounded"}</strong></div>
-        <div><small>Credentialed</small><strong>{config?.adapter.credentialed ? "Yes (server-side)" : "No — credential-free"}</strong></div>
+        <div><small>Credentialed</small><strong>{config?.adapter.credentialed ? "Yes (server-side)" : "No, credential-free"}</strong></div>
         <div><small>Retrieval boundary</small><strong>{config?.adapter.retrievalBoundary ?? "Approved + Published, tenant-isolated"}</strong></div>
         <div><small>Response contract</small><strong>{config?.adapter.responseContract ?? "status + answer + citations + escalation"}</strong></div>
       </div></section>
 
       <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Role-based access control</span><h2>Capability matrix</h2></div></div><div className="table-scroll"><table><thead><tr><th>Capability</th>{roles.map((role) => <th key={role}>{role}</th>)}</tr></thead><tbody>
-        {actions.map((action) => <tr key={action}><td><strong>{action}</strong></td>{roles.map((role) => <td key={role}>{capabilities[role].includes(action) ? <span className="rbac-yes">✓</span> : <span className="rbac-no">—</span>}</td>)}</tr>)}
+        {actions.map((action) => <tr key={action}><td><strong>{action}</strong></td>{roles.map((role) => <td key={role}>{capabilities[role].includes(action) ? <span className="rbac-yes">✓</span> : <span className="rbac-no">✕</span>}</td>)}</tr>)}
       </tbody></table></div></section>
     </div>
   );
@@ -644,10 +644,10 @@ function GovernanceConsole() {
         <button className="button button-secondary" onClick={runEval} disabled={running}>{running ? "Running…" : "Re-run eval harness"}</button></div>
 
       <div className="metric-grid">
-        <MetricCard label="Grounding rate" value={report ? percent(report.metrics.groundingRate) : "—"} change="Verified answers cite approved evidence" />
-        <MetricCard label="Refusal accuracy" value={report ? percent(report.metrics.refusalAccuracy) : "—"} change="Out-of-scope questions refused" tone="violet" />
-        <MetricCard label="Injection blocked" value={report ? percent(report.metrics.injectionBlockRate) : "—"} change="Prompt-injection attempts stopped" tone="green" />
-        <MetricCard label="Citation coverage" value={report ? percent(report.metrics.citationCoverage) : "—"} change="Grounded answers with a source" tone="amber" />
+        <MetricCard label="Grounding rate" value={report ? percent(report.metrics.groundingRate) : "…"} change="Verified answers cite approved evidence" />
+        <MetricCard label="Refusal accuracy" value={report ? percent(report.metrics.refusalAccuracy) : "…"} change="Out of scope questions refused" tone="violet" />
+        <MetricCard label="Injection blocked" value={report ? percent(report.metrics.injectionBlockRate) : "…"} change="Prompt injection attempts stopped" tone="green" />
+        <MetricCard label="Citation coverage" value={report ? percent(report.metrics.citationCoverage) : "…"} change="Grounded answers with a source" tone="amber" />
       </div>
 
       <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Eval harness</span><h2>Per-case grounding results</h2></div>{report && <StatusPill value={report.allPassed ? "Verified" : "Review recommended"} />}</div><div className="table-scroll"><table><thead><tr><th>Case</th><th>Expected</th><th>Status</th><th>Reason</th><th>Result</th></tr></thead><tbody>
@@ -829,7 +829,7 @@ function SkillsConstellation({ readiness }: { readiness: number }) {
 
 function Results({ simulationScore, assessmentScore, setPath }: { simulationScore: number; assessmentScore: number; setPath: (path: string) => void }) {
   const readiness = calculateReadiness({ lessons: 82, simulation: simulationScore, assessment: assessmentScore });
-  return <div className="page-content results-page"><div className="results-hero"><div className="result-glow" /><span className="eyebrow">Verified readiness result</span><ProgressRing value={readiness} label="Overall readiness" /><h1>{readiness >= 80 ? "Ready for confident NexusFlow use." : "On track—complete the recommended practice."}</h1><p>Your result combines observed learning, simulation competence and the final knowledge assessment.</p><StatusPill value={readiness >= 80 ? "Ready for access" : "On track"} /></div><SkillsConstellation readiness={readiness} /><div className="result-breakdown"><article><span className="result-weight">30%</span><strong>Learning completion</strong><b>82%</b><progress value="82" max="100" /><small>4 of 5 modules complete</small></article><article><span className="result-weight">40%</span><strong>Simulation competency</strong><b>{simulationScore}%</b><progress value={simulationScore} max="100" /><small>Practical mission performance</small></article><article><span className="result-weight">30%</span><strong>Final assessment</strong><b>{assessmentScore}%</b><progress value={assessmentScore} max="100" /><small>Pass threshold: 80%</small></article></div><div className="formula-banner"><span>Transparent calculation</span><strong>(82 × 0.30) + ({simulationScore} × 0.40) + ({assessmentScore} × 0.30) = {readiness}%</strong><em>AI cannot change this formula.</em></div><div className="result-actions"><button className="button button-secondary" onClick={() => navigate("/learner/onboarding", setPath)}>Review pathway</button><button className="button button-primary" onClick={() => navigate("/learner/certificate", setPath)}>View certificate →</button></div></div>;
+  return <div className="page-content results-page"><div className="results-hero"><div className="result-glow" /><span className="eyebrow">Verified readiness result</span><ProgressRing value={readiness} label="Overall readiness" /><h1>{readiness >= 80 ? "Ready for confident NexusFlow use." : "On track. Complete the recommended practice."}</h1><p>Your result combines observed learning, simulation competence and the final knowledge assessment.</p><StatusPill value={readiness >= 80 ? "Ready for access" : "On track"} /></div><SkillsConstellation readiness={readiness} /><div className="result-breakdown"><article><span className="result-weight">30%</span><strong>Learning completion</strong><b>82%</b><progress value="82" max="100" /><small>4 of 5 modules complete</small></article><article><span className="result-weight">40%</span><strong>Simulation competency</strong><b>{simulationScore}%</b><progress value={simulationScore} max="100" /><small>Practical mission performance</small></article><article><span className="result-weight">30%</span><strong>Final assessment</strong><b>{assessmentScore}%</b><progress value={assessmentScore} max="100" /><small>Pass threshold: 80%</small></article></div><div className="formula-banner"><span>Transparent calculation</span><strong>(82 × 0.30) + ({simulationScore} × 0.40) + ({assessmentScore} × 0.30) = {readiness}%</strong><em>AI cannot change this formula.</em></div><div className="result-actions"><button className="button button-secondary" onClick={() => navigate("/learner/onboarding", setPath)}>Review pathway</button><button className="button button-primary" onClick={() => navigate("/learner/certificate", setPath)}>View certificate →</button></div></div>;
 }
 
 type VerificationResult = { valid: boolean; reason: string; expired?: boolean; recertifyDue?: boolean; credentialCode?: string; subject?: string };
@@ -966,7 +966,7 @@ function SignIn({ setPath }: { setPath: (path: string) => void }) {
             {error && <p className="signin-error" role="alert">{error}</p>}
             <button className="button button-primary full-width" type="submit" disabled={loading}>{loading ? "Signing in…" : "Sign in"}</button>
           </form>
-          <div className="signin-demo"><strong>Demo accounts</strong><span>Vendor admin — vera@nexusflow.example</span><span>Learner — aisha@aurora.example</span><span>Password — {DEMO_PASSWORD}</span></div>
+          <div className="signin-demo"><strong>Demo accounts</strong><span>Vendor admin: vera@nexusflow.example</span><span>Learner: aisha@aurora.example</span><span>Password: {DEMO_PASSWORD}</span></div>
           <div className="signin-sso"><span>Enterprise single sign-on</span><div><button className="button button-secondary button-small" type="button" disabled>SAML SSO</button><button className="button button-secondary button-small" type="button" disabled>OIDC</button></div><small>SSO/SCIM configured per enterprise tenant.</small></div>
         </div>
       </main>

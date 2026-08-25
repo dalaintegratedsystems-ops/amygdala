@@ -58,7 +58,7 @@ export function generateProcedureDiagramSvg(input, options = {}) {
 
   const parts = [];
   parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)} — ${steps.length} step flow diagram" preserveAspectRatio="xMidYMin meet">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeXml(title)}: ${steps.length} step flow diagram" preserveAspectRatio="xMidYMin meet">`,
   );
   parts.push(`<title>${escapeXml(title)}</title>`);
   parts.push(

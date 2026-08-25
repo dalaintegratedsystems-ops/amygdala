@@ -101,7 +101,7 @@ export function issueCredential(input, options = {}) {
       created: issuanceDate,
       jws: signature,
     },
-    prototypeNotice: "Prototype demonstration credential — not a production certification.",
+    prototypeNotice: "Prototype demonstration credential, not a production certification.",
   };
 }
 
