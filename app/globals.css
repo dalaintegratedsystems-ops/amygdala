@@ -554,11 +554,9 @@ html[data-performance="low"] .sidebar, html[data-performance="low"] .app-header,
 :root { --px: 0; --py: 0; }
 
 /* Glassmorphism + cursor-follow lighting on panels */
-.panel { --mx: 50%; --my: 0%; transition: border-color .3s ease, box-shadow .3s ease; }
-.panel::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none; opacity: 0; mix-blend-mode: screen; background: radial-gradient(460px circle at var(--mx) var(--my), rgba(154,237,247,.20), rgba(168,137,250,.08) 42%, transparent 60%); transition: opacity .35s ease; }
-.panel:hover::after { opacity: 1; }
+.panel { --mx: 50%; --my: 0%; --glow: 0; transition: border-color .3s ease, box-shadow .3s ease; }
+.panel::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none; opacity: var(--glow); mix-blend-mode: screen; background: radial-gradient(460px circle at var(--mx) var(--my), rgba(154,237,247,.22), rgba(168,137,250,.10) 42%, transparent 60%); transition: opacity .35s ease; }
 .panel:hover { border-color: rgba(114,221,239,.24); box-shadow: 0 26px 60px rgba(0,0,0,.28), 0 0 26px rgba(114,221,239,.06), inset 0 1px rgba(255,255,255,.04); }
-.panel:hover::after { opacity: 1; }
 
 /* Scene parallax (pointer / device-tilt driven) */
 .hero-visual { transform: perspective(1200px) rotateY(calc(var(--px) * 7deg)) rotateX(calc(var(--py) * -7deg)); transition: transform .25s ease; will-change: transform; }

@@ -1047,13 +1047,18 @@ export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: strin
   useEffect(() => {
     const isLowPerf = () => document.documentElement.dataset.performance === "low";
     const isReduced = () => document.documentElement.dataset.motion === "reduced";
+    let litPanel: HTMLElement | null = null;
     const onMove = (event: PointerEvent) => {
-      // Cursor-follow lighting on glass panels.
+      // Cursor-follow lighting on glass panels (JS-driven so it works without
+      // a real hover pointer and is easy to gate for low-performance mode).
       const panel = (event.target as HTMLElement | null)?.closest?.(".panel") as HTMLElement | null;
+      if (panel !== litPanel && litPanel) litPanel.style.setProperty("--glow", "0");
+      litPanel = panel;
       if (panel && !isLowPerf()) {
         const rect = panel.getBoundingClientRect();
         panel.style.setProperty("--mx", `${((event.clientX - rect.left) / rect.width) * 100}%`);
         panel.style.setProperty("--my", `${((event.clientY - rect.top) / rect.height) * 100}%`);
+        panel.style.setProperty("--glow", "1");
       }
       // Scene parallax.
       if (!isReduced() && !isLowPerf()) {
