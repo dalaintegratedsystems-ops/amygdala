@@ -43,8 +43,14 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async ({ command }) => {
-  // Attach custom-domain routes only when building for deployment.
-  const workerConfig = command === "build" ? { ...localBindingConfig, routes: deployRoutes } : localBindingConfig;
+  // Attach custom-domain routes only when building for deployment. When
+  // DEPLOY_MINIMAL=1, drop the placeholder D1/R2 bindings so a first deploy
+  // succeeds without provisioning those resources (the app runs in-memory;
+  // source upload degrades gracefully). Provide real bindings to re-enable.
+  const minimal = process.env.DEPLOY_MINIMAL === "1";
+  const workerConfig = command === "build"
+    ? { ...localBindingConfig, routes: deployRoutes, ...(minimal ? { d1_databases: [], r2_buckets: [] } : {}) }
+    : localBindingConfig;
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
