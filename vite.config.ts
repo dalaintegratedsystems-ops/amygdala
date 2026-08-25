@@ -8,6 +8,15 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
+// Custom domains attached to the deployed Worker (Cloudflare "Custom Domain"
+// routes). Applied only at build time so local dev is unaffected. Override
+// with DEPLOY_HOSTS="a.com,www.a.com" if the target domains change.
+const DEPLOY_HOSTS = (process.env.DEPLOY_HOSTS ?? "amygdalalishay.com,www.amygdalalishay.com")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+const deployRoutes = DEPLOY_HOSTS.map((pattern) => ({ pattern, custom_domain: true }));
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
@@ -33,7 +42,9 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
+  // Attach custom-domain routes only when building for deployment.
+  const workerConfig = command === "build" ? { ...localBindingConfig, routes: deployRoutes } : localBindingConfig;
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -52,7 +63,7 @@ export default defineConfig(async () => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
+        config: workerConfig,
       }),
     ],
   };
