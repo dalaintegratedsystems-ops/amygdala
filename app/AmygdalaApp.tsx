@@ -18,6 +18,7 @@ import { platformRoleCapabilities } from "./lib/security.mjs";
 import { competencyModels, defaultCompetencyModel, listIntegrationConnectors } from "./lib/analytics.mjs";
 import { issueCredential, planContentReverification, runGroundingEval, verifyCredential } from "./lib/governance.mjs";
 import { extractKnowledge } from "./lib/ingest.mjs";
+import PromoIntro from "./PromoIntro";
 
 // The enterprise APIs authenticate via the HttpOnly session cookie (sent
 // automatically on same-origin fetches); RBAC + tenant isolation are
@@ -1028,6 +1029,22 @@ function SignIn({ setPath }: { setPath: (path: string) => void }) {
 export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: string }) {
   const [path, setPath] = useState(initialPath);
   const [session, setSession] = useState<SessionUser | null | undefined>(undefined);
+  // Cinematic intro plays first on the homepage (once per session, skippable).
+  const [introDone, setIntroDone] = useState(false);
+  const [introFading, setIntroFading] = useState(false);
+  useEffect(() => {
+    let seen = false;
+    try { seen = Boolean(window.sessionStorage.getItem("amygdala_intro_seen")); } catch { seen = false; }
+    if (initialPath !== "/" || seen) {
+      const id = requestAnimationFrame(() => setIntroDone(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [initialPath]);
+  function finishIntro() {
+    setIntroFading(true);
+    try { window.sessionStorage.setItem("amygdala_intro_seen", "1"); } catch { /* ignore */ }
+    window.setTimeout(() => setIntroDone(true), 700);
+  }
   useEffect(() => {
     const handler = () => setPath(window.location.pathname);
     window.addEventListener("popstate", handler);
@@ -1083,7 +1100,12 @@ export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: strin
   if (view === "admin") return <AdminApp path={path} setPath={setPath} />;
   if (view === "learner") return <LearnerApp path={path} setPath={setPath} />;
   if (view === "demo") return <DemoEntry setPath={setPath} />;
-  return <Landing path={path} setPath={setPath} />;
+  return (
+    <>
+      <Landing path={path} setPath={setPath} />
+      {!introDone && <div className={`intro-gate ${introFading ? "fade" : ""}`}><PromoIntro onComplete={finishIntro} showSkip /></div>}
+    </>
+  );
 }
 
 export { SAFE_FALLBACK };

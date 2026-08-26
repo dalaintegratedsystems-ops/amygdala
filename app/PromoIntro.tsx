@@ -9,7 +9,7 @@ import Image from "next/image";
 
 const DURATIONS = [4800, 6000, 6800, 6000, 6800, 6200, 6400]; // ms per scene
 
-export default function PromoIntro() {
+export default function PromoIntro({ onComplete, showSkip = false }: { onComplete?: () => void; showSkip?: boolean }) {
   const [scene, setScene] = useState(0);
   const [ready, setReady] = useState(0);
   const [replay, setReplay] = useState(0);
@@ -21,8 +21,12 @@ export default function PromoIntro() {
       acc += DURATIONS[s - 1];
       timers.push(window.setTimeout(() => setScene(s), acc));
     }
+    if (onComplete) {
+      const total = DURATIONS.reduce((sum, value) => sum + value, 0) + 1400;
+      timers.push(window.setTimeout(onComplete, total));
+    }
     return () => timers.forEach(clearTimeout);
-  }, [replay]);
+  }, [replay, onComplete]);
 
   useEffect(() => {
     if (scene !== 4) return;
@@ -107,7 +111,9 @@ export default function PromoIntro() {
         <p className="promo-url">www.amygdalalishay.com</p>
       </section>
 
-      <button className="promo-replay" onClick={() => { setScene(0); setReplay((value) => value + 1); }} aria-label="Replay intro">Replay ↻</button>
+      {onComplete
+        ? (showSkip && <button className="promo-skip" onClick={onComplete}>Skip intro →</button>)
+        : <button className="promo-replay" onClick={() => { setScene(0); setReplay((value) => value + 1); }} aria-label="Replay intro">Replay ↻</button>}
     </div>
   );
 }

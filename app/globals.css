@@ -678,3 +678,10 @@ html[data-performance="low"] .panel::after, html[data-performance="low"] .metric
 
 .promo-replay { position: absolute; right: 20px; bottom: 18px; z-index: 5; padding: 8px 14px; border: 1px solid var(--line); border-radius: 9px; background: rgba(12,18,31,.7); color: var(--muted); font-size: 12px; cursor: pointer; }
 .promo-replay:hover { color: var(--ink); border-color: var(--line-strong); }
+.promo-skip { position: absolute; right: 20px; top: 18px; z-index: 6; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: 9px; background: rgba(12,18,31,.72); color: var(--muted); font-size: 12px; cursor: pointer; }
+.promo-skip:hover { color: var(--ink); }
+
+/* Intro gate: cinematic promo overlay on first homepage visit */
+.intro-gate { position: fixed; inset: 0; z-index: 300; transition: opacity .6s ease; }
+.intro-gate.fade { opacity: 0; pointer-events: none; }
+.intro-gate .promo { min-height: 100%; height: 100%; }
