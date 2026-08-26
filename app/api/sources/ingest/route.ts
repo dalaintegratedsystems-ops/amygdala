@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { extractKnowledge } from "../../../lib/ingest.mjs";
+import { extractKnowledgeAI } from "../../../lib/ai.mjs";
 import { authorizeRequest } from "../../../lib/auth.mjs";
 
 export async function POST(request: Request) {
@@ -13,7 +13,8 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const result = extractKnowledge(
+  const result = await extractKnowledgeAI(
+    env as unknown as Record<string, unknown>,
     {
       title: typeof body.title === "string" ? body.title : undefined,
       module: typeof body.module === "string" ? body.module : undefined,

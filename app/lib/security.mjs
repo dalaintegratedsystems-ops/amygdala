@@ -122,12 +122,17 @@ export const enterpriseIdentityConfig = {
 // contract. `describeAdapter` never leaks secret values.
 export function describeAdapter(env = {}) {
   const configured = String(env.AI_ADAPTER ?? "deterministic").toLowerCase();
-  const hasKey = Boolean(env.AI_API_KEY && String(env.AI_API_KEY).length > 0);
-  const live = configured === "live" && hasKey;
+  const hasByoKey = Boolean(env.AI_API_KEY && String(env.AI_API_KEY).length > 0);
+  // A live OpenAI key is an additional, first-class trigger for the live
+  // adapter (used by the real-LLM path). The legacy BYO `AI_ADAPTER=live` +
+  // `AI_API_KEY` route is preserved so existing config keeps working.
+  const hasOpenAiKey = Boolean(env.OPENAI_API_KEY && String(env.OPENAI_API_KEY).length > 0);
+  const live = hasOpenAiKey || (configured === "live" && hasByoKey);
   return {
-    name: live ? "live-grounded" : "deterministic-grounded",
+    name: hasOpenAiKey ? "gpt-5.6-sol grounded" : live ? "live-grounded" : "deterministic-grounded",
+    model: hasOpenAiKey ? "gpt-5.6-sol" : null,
     mode: live ? "live" : "deterministic",
-    credentialed: hasKey,
+    credentialed: hasOpenAiKey || hasByoKey,
     serverSideOnly: true,
     retrievalBoundary: "Approved + Published sources, tenant-isolated",
     responseContract: "status + grounded answer + citations + escalation",

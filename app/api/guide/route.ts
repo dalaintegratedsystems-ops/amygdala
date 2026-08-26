@@ -1,4 +1,5 @@
-import { answerGroundedQuestion } from "../../lib/domain.mjs";
+import { env } from "cloudflare:workers";
+import { answerGroundedQuestionAI } from "../../lib/ai.mjs";
 
 const windows = new Map<string, { count: number; startedAt: number }>();
 const WINDOW_MS = 60_000;
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
   const currentModule = typeof body.module === "string" ? body.module.slice(0, 120) : undefined;
   if (!organisationId || query.length < 3 || query.length > 500) return Response.json({ error: "Invalid guide request." }, { status: 400 });
 
-  const result = answerGroundedQuestion({ organisationId, query, mode, role, module: currentModule });
+  const result = await answerGroundedQuestionAI(env as unknown as Record<string, unknown>, { organisationId, query, mode, role, module: currentModule });
   console.log(JSON.stringify({ event: "ai_response", organisationId, role, module: currentModule, status: result.status, sourceIds: result.citations.map((item: { sourceId: string }) => item.sourceId), reason: result.reason, timestamp: new Date().toISOString() }));
   return Response.json(result, { headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }

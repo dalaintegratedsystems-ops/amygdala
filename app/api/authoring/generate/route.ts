@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { sources } from "../../../lib/domain.mjs";
-import { approveCourse, generateCourseFromSource, summariseGeneratedCourse } from "../../../lib/authoring.mjs";
+import { approveCourse, summariseGeneratedCourse } from "../../../lib/authoring.mjs";
+import { generateCourseFromSourceAI } from "../../../lib/ai.mjs";
 import { authorizeRequest } from "../../../lib/auth.mjs";
 
 export async function POST(request: Request) {
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
   const source = inlineSource ?? sources.find((item: { id: string }) => item.id === sourceId);
   if (!source) return Response.json({ error: "Unknown source." }, { status: 404 });
 
-  const generated = generateCourseFromSource(source, { generatedAt: new Date().toISOString() });
+  const generated = await generateCourseFromSourceAI(env as unknown as Record<string, unknown>, source, { generatedAt: new Date().toISOString() });
   if (!generated.ok) return Response.json({ error: generated.message, reason: generated.reason }, { status: 422 });
 
   const course = body.approve === true ? approveCourse(generated) : generated;
