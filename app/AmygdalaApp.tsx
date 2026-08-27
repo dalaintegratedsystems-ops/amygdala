@@ -7,6 +7,8 @@ import { buildTranscript, generateProcedureDiagramSvg } from "./lib/simulation.m
 import { platformRoleCapabilities } from "./lib/security.mjs";
 import { competencyModels, defaultCompetencyModel } from "./lib/analytics.mjs";
 import PromoIntro from "./PromoIntro";
+import { CourseWizard } from "./components/CourseWizard";
+import { useBrandKit } from "./components/BrandKit";
 
 // All enterprise APIs authenticate via the HttpOnly session cookie (sent
 // automatically on same-origin fetches); RBAC + tenant isolation are enforced
@@ -479,184 +481,9 @@ function KnowledgeVault({ session }: { session: SessionUser | null }) {
 }
 
 // ---- admin: training studio ------------------------------------------
-
-type ExtractedResult = {
-  ok: boolean;
-  message?: string;
-  source: StoredSource;
-  chunks: Array<{ section: string; content: string; tokenCount: number }>;
-  grounding: { grounded: boolean; groundedCount: number; total: number };
-  engine: { engine: string; requiresApiKey: boolean; grounding: string; humanApproval: boolean };
-  summary: { sections: number; chunks: number; procedureSteps: number; keywords: number };
-};
-
-const SAMPLE_DOC = `# Configure a workflow automation
-
-Automations run an approved action when a trigger event happens.
-
-1. Open Workflows from the primary navigation.
-2. Select New automation.
-3. Choose an approved trigger and configure its conditions.
-4. Choose an action and complete its required fields.
-5. Review the automation summary.
-6. Select Activate.`;
-
-function AuthoringStudio({ captions = true }: { captions?: boolean }) {
-  const [approvedSources, setApprovedSources] = useState<StoredSource[]>([]);
-  const [sourceId, setSourceId] = useState("");
-  const [course, setCourse] = useState<GeneratedCourse | null>(null);
-  const [published, setPublished] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [activeSourceId, setActiveSourceId] = useState("");
-
-  const [uploadTitle, setUploadTitle] = useState("");
-  const [uploadText, setUploadText] = useState("");
-  const [extracted, setExtracted] = useState<ExtractedResult | null>(null);
-  const [extracting, setExtracting] = useState(false);
-  const [extractError, setExtractError] = useState("");
-  const [sourcePublished, setSourcePublished] = useState(false);
-
-  function applyApproved(sources: StoredSource[]) {
-    const approved = sources.filter((source) => source.status === "Published" && source.approvalStatus === "Approved" && source.procedure.length > 0);
-    setApprovedSources(approved);
-    setSourceId((current) => current || approved[0]?.id || "");
-  }
-  async function reloadApproved() {
-    try {
-      const response = await fetch("/api/sources");
-      const data = response.ok ? await response.json() : { sources: [] };
-      applyApproved(data.sources ?? []);
-    } catch { /* ignore */ }
-  }
-  useEffect(() => {
-    fetch("/api/sources").then((response) => (response.ok ? response.json() : { sources: [] })).then((data) => applyApproved(data.sources ?? [])).catch(() => {});
-  }, []);
-
-  async function readFile(file?: File) {
-    if (!file) return;
-    setUploadTitle((previous) => previous || file.name.replace(/\.[^.]+$/, ""));
-    setUploadText(await file.text());
-  }
-
-  async function extract() {
-    setExtracting(true); setExtractError(""); setExtracted(null); setSourcePublished(false); setCourse(null);
-    const payload = { title: uploadTitle || "Imported source", filename: uploadTitle || "document", mimeType: "text/markdown", text: uploadText };
-    try {
-      const response = await fetch("/api/sources/ingest", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error ?? "Extraction failed"); }
-      setExtracted((await response.json()) as ExtractedResult);
-    } catch (error) {
-      setExtractError(error instanceof Error ? error.message : "Provide document text to extract.");
-    } finally {
-      setExtracting(false);
-    }
-  }
-
-  // Publish the extracted source so it can ground a course (human approval).
-  async function publishSource() {
-    if (!extracted) return;
-    const response = await fetch("/api/sources", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: extracted.source.id, status: "Published", approvalStatus: "Approved" }) });
-    if (response.ok) { setSourcePublished(true); reloadApproved(); }
-  }
-
-  async function generate(fromSourceId: string, approve = false) {
-    if (!fromSourceId) return;
-    setLoading(true); setActiveSourceId(fromSourceId);
-    try {
-      const response = await fetch("/api/authoring/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sourceId: fromSourceId, approve }) });
-      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error ?? "Generation failed"); }
-      const data = (await response.json()) as { course: GeneratedCourse };
-      setCourse(data.course);
-      setPublished(approve);
-    } catch (error) {
-      setExtractError(error instanceof Error ? error.message : "Generation failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="page-content">
-      <div className="page-heading">
-        <div><span className="eyebrow">Grounded authoring</span><h1>Training Studio</h1><p>Extract knowledge from a document, or pick an approved source. Every artefact is grounded to its source and persisted for review.</p></div>
-      </div>
-
-      <section className="panel upload-studio">
-        <div className="panel-header"><div><span className="tiny-label">AI document upload</span><h2>Extract knowledge from a document</h2></div>{extracted && <span className="engine-badge">{extracted.engine.engine === "deterministic" ? "Deterministic · no API key" : extracted.engine.engine}</span>}</div>
-        <div className="upload-studio-body">
-          <div className="upload-inputs">
-            <label className="studio-field"><span className="tiny-label">Document title</span><input aria-label="Document title" value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} placeholder="e.g. Configure a workflow automation" /></label>
-            <label className="studio-field"><span className="tiny-label">Document text (paste, or choose a .txt/.md file)</span><textarea aria-label="Document text" value={uploadText} onChange={(event) => setUploadText(event.target.value)} rows={7} placeholder="Paste the approved document text here…" /></label>
-            <div className="upload-actions">
-              <input id="doc-file" type="file" accept=".txt,.md,text/plain,text/markdown" className="visually-hidden-file" onChange={(event) => readFile(event.target.files?.[0])} />
-              <label htmlFor="doc-file" className="button button-secondary button-small">Choose .txt/.md file</label>
-              <button type="button" className="button button-secondary button-small" onClick={() => { setUploadTitle("Configure a workflow automation"); setUploadText(SAMPLE_DOC); }}>Use sample document</button>
-              <button type="button" className="button button-primary" onClick={extract} disabled={extracting || uploadText.trim().length < 20}>{extracting ? "Extracting…" : "Extract knowledge with AI"} <span>✦</span></button>
-            </div>
-            {extractError && <p className="signin-error" role="alert">{extractError}</p>}
-          </div>
-
-          {extracted && extracted.ok && (
-            <div className="extract-result">
-              <div className="extract-head"><StatusPill value={sourcePublished ? "Published" : "Ready for review"} /><span className="grounded-chip">{extracted.grounding.grounded ? "✓ Fully grounded" : `${extracted.grounding.groundedCount}/${extracted.grounding.total} grounded`}</span><span className="extract-meta">{extracted.summary.chunks} chunks · {extracted.summary.procedureSteps} steps · {extracted.summary.keywords} keywords</span></div>
-              <p className="extract-summary">{extracted.source.explanation}</p>
-              <div className="keyword-chips">{extracted.source.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>
-              <div className="extract-steps"><span className="tiny-label">Extracted procedure (span-verified)</span><ol>{extracted.source.procedure.map((step, index) => <li key={index}>{step} <em>✓ grounded</em></li>)}</ol></div>
-              <ProcedureDiagram steps={extracted.source.procedure} title={extracted.source.title} captions={captions} />
-              <div className="extract-cta">
-                {!sourcePublished
-                  ? <button className="button button-secondary" onClick={publishSource}>Approve &amp; publish source</button>
-                  : <span className="approved-note">✓ Source published</span>}
-                <button className="button button-primary" onClick={() => generate(extracted.source.id, false)} disabled={!sourcePublished || loading}>Generate course from this document →</button>
-              </div>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="panel studio-toolbar">
-        <label className="studio-field"><span className="tiny-label">Or generate from an approved source</span>
-          <select aria-label="Choose an approved source" value={sourceId} onChange={(event) => { setSourceId(event.target.value); setCourse(null); }}>
-            {approvedSources.length === 0 && <option value="">No approved sources yet</option>}
-            {approvedSources.map((source) => <option key={source.id} value={source.id}>{source.title} · v{source.version}</option>)}
-          </select>
-        </label>
-        <button className="button button-primary" onClick={() => generate(sourceId, false)} disabled={loading || !sourceId}>{loading ? "Generating…" : "Generate grounded course"} <span>✦</span></button>
-      </section>
-
-      {course && (
-        <>
-          <div className="studio-stats vault-stats">
-            <div><strong>{course.modules.length}</strong><span>Modules</span></div>
-            <div><strong>{course.lessons.length}</strong><span>Lessons</span></div>
-            <div><strong>{course.assessment.questions.length}</strong><span>Assessment items</span></div>
-            <div><strong>{course.simulation.steps.length}</strong><span>Simulation steps</span></div>
-          </div>
-          <div className="studio-layout">
-            <section className="panel studio-course">
-              <div className="panel-header"><div><span className="tiny-label">Generated programme</span><h2>{course.programme.title}</h2></div><StatusPill value={published ? "Published" : "Draft"} /></div>
-              <div className="studio-body">
-                <div className="provenance-chip"><span>▣</span><span><strong>Grounded generation</strong><small>{course.provenance.generator} · cites {course.citation.title} v{course.provenance.sourceVersion} · {course.provenance.sourceSection}</small></span></div>
-                {course.modules.map((module) => <div className="studio-module" key={module.id}><span className={`module-symbol ${module.label.toLowerCase()}`}>{module.label === "Learn" ? "◫" : module.label === "Practise" ? "◇" : "✓"}</span><span><small>{module.label} · {module.duration} min</small><strong>{module.title}</strong></span></div>)}
-                {course.lessons.map((lesson) => <div className="studio-lesson" key={lesson.id}><strong>{lesson.title}</strong><p>{lesson.content}</p><span className="citation-inline">▣ {lesson.citation.title} · v{lesson.citation.version} · {lesson.citation.section}</span></div>)}
-                <div className="studio-assessment"><span className="tiny-label">Assessment · pass threshold {course.assessment.passThreshold}%</span>{course.assessment.questions.map((question) => <div className="studio-question" key={question.id}><strong>{question.question}</strong><em>Approved answer: {question.options[0]}</em></div>)}</div>
-              </div>
-            </section>
-            <aside className="panel studio-visual">
-              <span className="tiny-label">Immersive simulation preview</span>
-              <h2>{course.simulation.title}</h2>
-              <ProcedureDiagram steps={course.simulation.steps.map((step) => step.label)} title={course.simulation.title} accent="violet" />
-              <div className="review-checklist"><span className="tiny-label">Human review before publish</span><ul className="check-list">{course.reviewChecklist.map((item) => <li key={item}>{item}</li>)}</ul></div>
-              {published
-                ? <div className="published-banner"><span>✓</span><p><strong>Published to the programme.</strong> Learners now receive this grounded pathway.</p></div>
-                : <button className="button button-primary full-width" onClick={() => generate(activeSourceId || sourceId, true)} disabled={loading}>Approve &amp; publish course →</button>}
-            </aside>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+// The Training Studio is the CourseWizard (Upload → Review AI draft → Brand &
+// publish). It is implemented in ./components/CourseWizard.tsx along with the
+// block editor, architect and brand-kit UI to keep this file maintainable.
 
 // ---- admin: programmes -----------------------------------------------
 
@@ -775,7 +602,7 @@ function AdminApp({ path, setPath, session }: { path: string; setPath: (path: st
   let content: React.ReactNode;
   if (path === "/admin/command-centre") content = <CommandCentre session={session} setPath={setPath} />;
   else if (path === "/admin/knowledge-vault") content = <KnowledgeVault session={session} />;
-  else if (path === "/admin/training-studio") content = <AuthoringStudio />;
+  else if (path === "/admin/training-studio") content = <CourseWizard onPreviewLearner={() => navigate("/learner/home", setPath)} />;
   else if (path === "/admin/programmes") content = <Programmes setPath={setPath} />;
   else if (path === "/admin/ai-activity") content = <AIActivity />;
   else if (path === "/admin/analytics") content = <AnalyticsPage />;
@@ -1056,6 +883,9 @@ export default function AmygdalaApp({ initialPath = "/" }: { initialPath?: strin
     return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("deviceorientation", onTilt); };
   }, []);
   const view = useMemo(() => path.startsWith("/admin") ? "admin" : path.startsWith("/learner") ? "learner" : path.startsWith("/signin") ? "signin" : path === "/demo" ? "demo" : "landing", [path]);
+  // Apply the workspace brand kit (logo/colours/font) across the signed-in
+  // admin and learner shells via the existing CSS custom properties.
+  useBrandKit((view === "admin" || view === "learner") && Boolean(session));
   if (view === "signin") return <SignIn setPath={setPath} />;
   // Client-side guard: unauthenticated users are sent to sign-in. (Server-side
   // enforcement lives on the API routes; SSR content is non-sensitive shell.)
