@@ -14,7 +14,6 @@ import {
   createMemoryStore,
   knowledgeJsonFor,
   now,
-  parseArray,
   parseObject,
   progressKey,
   rowToSimulation,
