@@ -9,97 +9,19 @@
 import { and, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/d1";
 import * as schema from "../../db/schema.ts";
-
-function now() {
-  return new Date().toISOString();
-}
-
-function parseArray(value) {
-  try {
-    const parsed = JSON.parse(value ?? "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function parseObject(value) {
-  try {
-    const parsed = JSON.parse(value ?? "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-// Map a persisted source row to the flat shape the domain/authoring functions
-// expect (procedure/keywords as arrays).
-function rowToSource(row) {
-  const knowledge = parseObject(row.knowledgeJson);
-  return {
-    id: row.id,
-    organisationId: row.organisationId,
-    title: row.title,
-    description: row.description,
-    product: row.product,
-    module: row.module,
-    intendedRole: row.intendedRole,
-    contentOwner: row.contentOwner,
-    type: row.type,
-    version: row.version,
-    status: row.status,
-    approvalStatus: row.approvalStatus,
-    section: row.section,
-    storageKey: row.storageKey ?? null,
-    extractedText: row.extractedText,
-    explanation: row.explanation,
-    procedure: parseArray(row.procedureJson),
-    keywords: parseArray(row.keywordsJson),
-    uploadDate: row.uploadDate ?? null,
-    effectiveDate: row.effectiveDate ?? null,
-    documentType: knowledge.documentType ?? null,
-    outline: Array.isArray(knowledge.outline) ? knowledge.outline : [],
-    coverage: knowledge.coverage ?? null,
-  };
-}
-
-// Serialise the whole-document knowledge (documentType/outline/coverage) into
-// the single knowledge_json column.
-function knowledgeJsonFor(source) {
-  return JSON.stringify({
-    documentType: source.documentType ?? null,
-    outline: Array.isArray(source.outline) ? source.outline : [],
-    coverage: source.coverage ?? null,
-  });
-}
-
-function sourceToRow(source, timestamp) {
-  return {
-    id: source.id,
-    organisationId: source.organisationId,
-    title: source.title ?? "Untitled source",
-    description: source.description ?? "",
-    product: source.product ?? "",
-    module: source.module ?? "",
-    intendedRole: source.intendedRole ?? "All roles",
-    contentOwner: source.contentOwner ?? "",
-    type: source.type ?? "Document",
-    version: source.version ?? "1.0",
-    status: source.status ?? "Draft",
-    approvalStatus: source.approvalStatus ?? "Pending",
-    section: source.section ?? "",
-    storageKey: source.storageKey ?? null,
-    extractedText: source.extractedText ?? "",
-    explanation: source.explanation ?? "",
-    procedureJson: JSON.stringify(Array.isArray(source.procedure) ? source.procedure : []),
-    keywordsJson: JSON.stringify(Array.isArray(source.keywords) ? source.keywords : []),
-    knowledgeJson: knowledgeJsonFor(source),
-    uploadDate: source.uploadDate ?? null,
-    effectiveDate: source.effectiveDate ?? null,
-    createdAt: source.createdAt ?? timestamp,
-    updatedAt: timestamp,
-  };
-}
+import {
+  OWNER_ADMIN,
+  createMemoryStore,
+  knowledgeJsonFor,
+  now,
+  parseArray,
+  parseObject,
+  progressKey,
+  rowToSimulation,
+  rowToSource,
+  simulationToRow,
+  sourceToRow,
+} from "./store-core.mjs";
 
 // ---- D1-backed implementation ---------------------------------------
 
@@ -295,154 +217,181 @@ function createD1Store(db) {
       }
       return merged;
     },
-  };
-}
 
-// ---- In-memory implementation ---------------------------------------
+    // ---- vendor simulations (tolerant of pre-migration state) --------
 
-function createMemoryStore() {
-  const data = {
-    organisations: new Map(),
-    users: new Map(),
-    sources: new Map(),
-    courses: new Map(),
-    audit: [],
-    brands: new Map(),
-  };
-
-  return {
-    backend: "memory",
-
-    async findUserByEmail(email) {
-      const normalised = String(email ?? "").trim().toLowerCase();
-      for (const user of data.users.values()) {
-        if (user.email.toLowerCase() === normalised) return { ...user };
+    async listSimulations(organisationId, { status } = {}) {
+      try {
+        const rows = await db.select().from(schema.simulations).where(eq(schema.simulations.organisationId, organisationId)).orderBy(desc(schema.simulations.createdAt));
+        return rows.map(rowToSimulation).filter((sim) => !status || sim.status === status);
+      } catch {
+        return [];
       }
-      return null;
     },
 
-    async countUsers() {
-      return data.users.size;
+    async getSimulation(organisationId, id) {
+      try {
+        const rows = await db.select().from(schema.simulations).where(and(eq(schema.simulations.organisationId, organisationId), eq(schema.simulations.id, id))).limit(1);
+        return rows[0] ? rowToSimulation(rows[0]) : null;
+      } catch {
+        return null;
+      }
     },
 
-    async createOrganisation(org) {
-      const record = { id: org.id, name: org.name, type: org.type ?? "vendor" };
-      data.organisations.set(org.id, record);
-      return record;
+    async createSimulation(sim) {
+      const row = simulationToRow(sim, now());
+      await db.insert(schema.simulations).values(row);
+      return rowToSimulation(row);
     },
 
-    async getOrganisation(id) {
-      return data.organisations.get(id) ?? null;
-    },
-
-    async createUser(user) {
-      const record = { userId: user.userId, email: String(user.email).trim().toLowerCase(), displayName: user.displayName, organisationId: user.organisationId, role: user.role, credential: { ...user.credential } };
-      data.users.set(user.userId, record);
-      return user;
-    },
-
-    async listSources(organisationId, { status } = {}) {
-      return [...data.sources.values()]
-        .filter((source) => source.organisationId === organisationId && (!status || source.status === status))
-        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
-        .map((source) => ({ ...source, procedure: [...source.procedure], keywords: [...source.keywords] }));
-    },
-
-    async listApprovedSources(organisationId) {
-      return [...data.sources.values()]
-        .filter((source) => source.organisationId === organisationId && source.status === "Published" && source.approvalStatus === "Approved")
-        .map((source) => ({ ...source, procedure: [...source.procedure], keywords: [...source.keywords] }));
-    },
-
-    async getSource(organisationId, id) {
-      const source = data.sources.get(id);
-      if (!source || source.organisationId !== organisationId) return null;
-      return { ...source, procedure: [...source.procedure], keywords: [...source.keywords] };
-    },
-
-    async createSource(source) {
+    async updateSimulation(organisationId, id, patch) {
       const timestamp = now();
-      const record = { ...rowToSource(sourceToRow(source, timestamp)), createdAt: source.createdAt ?? timestamp };
-      data.sources.set(record.id, record);
-      return { ...record };
-    },
-
-    async updateSource(organisationId, id, patch) {
-      const source = data.sources.get(id);
-      if (!source || source.organisationId !== organisationId) return null;
-      const updated = { ...source };
-      for (const key of ["title", "description", "product", "module", "intendedRole", "contentOwner", "type", "version", "status", "approvalStatus", "section", "storageKey", "extractedText", "explanation", "uploadDate", "effectiveDate", "procedure", "keywords", "documentType", "outline", "coverage"]) {
-        if (patch[key] !== undefined) updated[key] = patch[key];
+      const update = { updatedAt: timestamp };
+      for (const key of ["title", "description", "mode", "targetUrl", "status"]) {
+        if (patch[key] !== undefined) update[key] = patch[key];
       }
-      data.sources.set(id, updated);
-      return { ...updated };
+      if (patch.embeddable !== undefined) update.embeddable = patch.embeddable === false ? 0 : 1;
+      if (patch.bridgeEnabled !== undefined) update.bridgeEnabled = patch.bridgeEnabled ? 1 : 0;
+      if (patch.steps !== undefined) update.stepsJson = JSON.stringify(Array.isArray(patch.steps) ? patch.steps : []);
+      if (patch.screens !== undefined) update.screensJson = JSON.stringify(Array.isArray(patch.screens) ? patch.screens : []);
+      await db.update(schema.simulations).set(update).where(and(eq(schema.simulations.organisationId, organisationId), eq(schema.simulations.id, id)));
+      return this.getSimulation(organisationId, id);
     },
 
-    async createCourse(course) {
+    async deleteSimulation(organisationId, id) {
+      await db.delete(schema.simulations).where(and(eq(schema.simulations.organisationId, organisationId), eq(schema.simulations.id, id)));
+      return { ok: true };
+    },
+
+    async listSimOrigins(organisationId) {
+      try {
+        const rows = await db.select().from(schema.simOrigins).where(eq(schema.simOrigins.organisationId, organisationId)).orderBy(desc(schema.simOrigins.createdAt));
+        return rows.map((row) => ({ id: row.id, organisationId: row.organisationId, origin: row.origin, label: row.label ?? "", createdAt: row.createdAt }));
+      } catch {
+        return [];
+      }
+    },
+
+    async addSimOrigin(organisationId, { origin, label }) {
       const timestamp = now();
-      const record = { id: course.id, organisationId: course.organisationId, sourceId: course.sourceId, title: course.title, role: course.role ?? "", status: course.status ?? "Draft", approvalStatus: course.approvalStatus ?? "Pending", course: course.course, createdAt: timestamp };
-      data.courses.set(record.id, record);
-      return { ...record };
-    },
-
-    async listCourses(organisationId, { status } = {}) {
-      return [...data.courses.values()]
-        .filter((course) => course.organisationId === organisationId && (!status || course.status === status))
-        .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
-        .map((course) => ({ ...course }));
-    },
-
-    async getCourse(organisationId, id) {
-      const course = data.courses.get(id);
-      if (!course || course.organisationId !== organisationId) return null;
-      return { ...course };
-    },
-
-    async findCourseBySource(organisationId, sourceId) {
-      for (const course of data.courses.values()) {
-        if (course.organisationId === organisationId && course.sourceId === sourceId) return { ...course };
+      const row = { id: crypto.randomUUID(), organisationId, origin, label: label ?? "", createdAt: timestamp };
+      try {
+        await db.insert(schema.simOrigins).values(row);
+      } catch {
+        // Unique conflict — origin already allow-listed. Return the existing.
+        const rows = await db.select().from(schema.simOrigins).where(and(eq(schema.simOrigins.organisationId, organisationId), eq(schema.simOrigins.origin, origin))).limit(1);
+        if (rows[0]) return { id: rows[0].id, organisationId, origin: rows[0].origin, label: rows[0].label ?? "", createdAt: rows[0].createdAt };
       }
-      return null;
+      return { id: row.id, organisationId, origin, label: row.label, createdAt: timestamp };
     },
 
-    async updateCourse(organisationId, id, patch) {
-      const course = data.courses.get(id);
-      if (!course || course.organisationId !== organisationId) return null;
-      const updated = { ...course };
-      for (const key of ["title", "role", "status", "approvalStatus", "course"]) {
-        if (patch[key] !== undefined) updated[key] = patch[key];
+    async removeSimOrigin(organisationId, id) {
+      await db.delete(schema.simOrigins).where(and(eq(schema.simOrigins.organisationId, organisationId), eq(schema.simOrigins.id, id)));
+      return { ok: true };
+    },
+
+    // ---- learner persistence (tolerant of pre-migration state) -------
+
+    async getLearnerProgress(organisationId, userId, courseId) {
+      try {
+        const rows = await db.select().from(schema.learnerProgress).where(and(eq(schema.learnerProgress.organisationId, organisationId), eq(schema.learnerProgress.userId, userId), eq(schema.learnerProgress.courseId, courseId))).limit(1);
+        const row = rows[0];
+        return row ? { organisationId, userId, courseId, learningScore: row.learningScore, simulationScore: row.simulationScore, assessmentScore: row.assessmentScore, readiness: row.readiness, status: row.status, updatedAt: row.updatedAt } : null;
+      } catch {
+        return null;
       }
-      data.courses.set(id, updated);
-      return { ...updated };
     },
 
-    async recordAudit(event) {
-      const record = { id: event.id ?? crypto.randomUUID(), organisationId: event.organisationId, actor: event.actor ?? null, role: event.role ?? null, eventType: event.eventType, entityType: event.entityType, entityId: event.entityId, detail: event.detail ?? "", createdAt: event.createdAt ?? now() };
-      data.audit.push(record);
-      return record;
+    async listLearnerProgress(organisationId, userId) {
+      try {
+        const rows = await db.select().from(schema.learnerProgress).where(and(eq(schema.learnerProgress.organisationId, organisationId), eq(schema.learnerProgress.userId, userId)));
+        return rows.map((row) => ({ organisationId, userId, courseId: row.courseId, learningScore: row.learningScore, simulationScore: row.simulationScore, assessmentScore: row.assessmentScore, readiness: row.readiness, status: row.status, updatedAt: row.updatedAt }));
+      } catch {
+        return [];
+      }
     },
 
-    async listAudit(organisationId) {
-      return data.audit.filter((event) => event.organisationId === organisationId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((event) => ({ ...event }));
-    },
-
-    async getBrand(organisationId) {
-      const brand = data.brands.get(organisationId);
-      return brand ? { ...brand } : null;
-    },
-
-    async upsertBrand(organisationId, patch) {
-      const existing = data.brands.get(organisationId) ?? {};
+    async upsertLearnerProgress(organisationId, userId, courseId, patch) {
+      const timestamp = now();
+      const existing = await this.getLearnerProgress(organisationId, userId, courseId);
       const merged = {
-        organisationId,
-        workspaceName: patch.workspaceName ?? existing.workspaceName ?? "",
-        logoKey: patch.logoKey !== undefined ? patch.logoKey : existing.logoKey ?? null,
-        primaryColor: patch.primaryColor ?? existing.primaryColor ?? "",
-        accentColor: patch.accentColor ?? existing.accentColor ?? "",
-        fontFamily: patch.fontFamily ?? existing.fontFamily ?? "",
+        learningScore: patch.learningScore ?? existing?.learningScore ?? 0,
+        simulationScore: patch.simulationScore ?? existing?.simulationScore ?? 0,
+        assessmentScore: patch.assessmentScore ?? existing?.assessmentScore ?? 0,
+        readiness: patch.readiness ?? existing?.readiness ?? 0,
+        status: patch.status ?? existing?.status ?? "in-progress",
       };
-      data.brands.set(organisationId, merged);
-      return { ...merged };
+      if (existing) {
+        await db.update(schema.learnerProgress).set({ ...merged, updatedAt: timestamp }).where(and(eq(schema.learnerProgress.organisationId, organisationId), eq(schema.learnerProgress.userId, userId), eq(schema.learnerProgress.courseId, courseId)));
+      } else {
+        await db.insert(schema.learnerProgress).values({ id: progressKey(organisationId, userId, courseId), organisationId, userId, courseId, ...merged, createdAt: timestamp, updatedAt: timestamp });
+      }
+      return { organisationId, userId, courseId, ...merged, updatedAt: timestamp };
+    },
+
+    async recordAttempt(attempt) {
+      const timestamp = attempt.createdAt ?? now();
+      const row = {
+        id: attempt.id ?? crypto.randomUUID(),
+        organisationId: attempt.organisationId,
+        userId: attempt.userId,
+        courseId: attempt.courseId,
+        kind: attempt.kind,
+        refId: attempt.refId ?? "",
+        score: Math.round(attempt.score ?? 0),
+        detailJson: JSON.stringify(attempt.detail ?? {}),
+        createdAt: timestamp,
+      };
+      await db.insert(schema.learnerAttempts).values(row);
+      return { ...row, detail: attempt.detail ?? {} };
+    },
+
+    async listAttempts(organisationId, userId, courseId) {
+      try {
+        const conditions = [eq(schema.learnerAttempts.organisationId, organisationId), eq(schema.learnerAttempts.userId, userId)];
+        if (courseId) conditions.push(eq(schema.learnerAttempts.courseId, courseId));
+        const rows = await db.select().from(schema.learnerAttempts).where(and(...conditions)).orderBy(desc(schema.learnerAttempts.createdAt));
+        return rows.map((row) => ({ id: row.id, organisationId: row.organisationId, userId: row.userId, courseId: row.courseId, kind: row.kind, refId: row.refId, score: row.score, detail: parseObject(row.detailJson), createdAt: row.createdAt }));
+      } catch {
+        return [];
+      }
+    },
+
+    async getCredential(organisationId, userId, courseId) {
+      try {
+        const rows = await db.select().from(schema.credentials).where(and(eq(schema.credentials.organisationId, organisationId), eq(schema.credentials.userId, userId), eq(schema.credentials.courseId, courseId))).limit(1);
+        const row = rows[0];
+        return row ? { id: row.id, organisationId, userId, courseId, learner: row.learner, programme: row.programme, readiness: row.readiness, breakdown: parseObject(row.breakdownJson), issuedAt: row.issuedAt } : null;
+      } catch {
+        return null;
+      }
+    },
+
+    async listCredentials(organisationId, userId) {
+      try {
+        const rows = await db.select().from(schema.credentials).where(and(eq(schema.credentials.organisationId, organisationId), eq(schema.credentials.userId, userId))).orderBy(desc(schema.credentials.issuedAt));
+        return rows.map((row) => ({ id: row.id, organisationId, userId, courseId: row.courseId, learner: row.learner, programme: row.programme, readiness: row.readiness, breakdown: parseObject(row.breakdownJson), issuedAt: row.issuedAt }));
+      } catch {
+        return [];
+      }
+    },
+
+    async issueCredential(cred) {
+      const timestamp = now();
+      const existing = await this.getCredential(cred.organisationId, cred.userId, cred.courseId);
+      const values = {
+        learner: cred.learner ?? "",
+        programme: cred.programme ?? "",
+        readiness: Math.round(cred.readiness ?? 0),
+        breakdownJson: JSON.stringify(cred.breakdown ?? {}),
+        issuedAt: existing?.issuedAt ?? timestamp,
+      };
+      if (existing) {
+        await db.update(schema.credentials).set({ ...values, updatedAt: timestamp }).where(and(eq(schema.credentials.organisationId, cred.organisationId), eq(schema.credentials.userId, cred.userId), eq(schema.credentials.courseId, cred.courseId)));
+        return { ...existing, ...cred, readiness: values.readiness, breakdown: cred.breakdown ?? {}, issuedAt: values.issuedAt };
+      }
+      await db.insert(schema.credentials).values({ id: crypto.randomUUID(), organisationId: cred.organisationId, userId: cred.userId, courseId: cred.courseId, ...values, createdAt: timestamp, updatedAt: timestamp });
+      return { organisationId: cred.organisationId, userId: cred.userId, courseId: cred.courseId, learner: values.learner, programme: values.programme, readiness: values.readiness, breakdown: cred.breakdown ?? {}, issuedAt: values.issuedAt };
     },
   };
 }
@@ -476,14 +425,6 @@ export function getStore(env = {}) {
 // Ensure a single bootstrap admin + organisation exists. Idempotent: only
 // seeds when the users table is empty. Sources bootstrap admin credentials
 // from ADMIN_* env/secrets, falling back to the committed owner admin record.
-const OWNER_ADMIN = {
-  userId: "usr-admin",
-  email: "admin@amygdalalishay.com",
-  displayName: "Site Administrator",
-  role: "Vendor Administrator",
-  organisationId: "org-primary",
-  credential: { salt: "70546e0164b462d9c8c2489e2764e338", iterations: 100000, hash: "9b3d65eca40452dfb51daf9ed112b6fc6e4ef5bf9d5878662bde6724ae723686" },
-};
 
 export async function ensureBootstrap(env = {}) {
   const store = getStore(env);

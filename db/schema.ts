@@ -85,6 +85,87 @@ export const brandKits = sqliteTable("brand_kits", {
   ...timestamps,
 });
 
+// A vendor SaaS simulation definition: an authored guided overlay on top of
+// either an embedded sandbox URL (iframe) or a set of uploaded screenshots
+// (DOM-capture fallback). Steps are ordered hotspots + coaching. Everything
+// is a JSON blob so the schema stays small and tolerant during rollout.
+export const simulations = sqliteTable("simulations", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  // "iframe" (embed a sandbox URL) or "screenshot" (guided walkthrough over
+  // author-uploaded screens). Never points at a production system.
+  mode: text("mode").notNull().default("iframe"),
+  targetUrl: text("target_url").notNull().default(""),
+  // Cached embeddability probe result (0/1). Non-embeddable targets fall back
+  // to the screenshot walkthrough.
+  embeddable: integer("embeddable").notNull().default(1),
+  // Optional postMessage bridge for real step detection when the vendor
+  // cooperates; otherwise the learner advances steps manually.
+  bridgeEnabled: integer("bridge_enabled").notNull().default(0),
+  status: text("status").notNull().default("Draft"),
+  // Ordered steps: [{ id, label, coaching, hotspot:{ x, y, w, h }, screenIndex,
+  //   match:{ event } }].
+  stepsJson: text("steps_json").notNull().default("[]"),
+  // Screenshot-fallback screens: [{ key, alt, width, height }].
+  screensJson: text("screens_json").notNull().default("[]"),
+  ...timestamps,
+}, (table) => [index("idx_simulations_org").on(table.organisationId, table.status)]);
+
+// Per-workspace allow-list of origins that may be embedded in the simulator.
+// The simulator refuses to embed any origin not on this list.
+export const simOrigins = sqliteTable("sim_origins", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  origin: text("origin").notNull(),
+  label: text("label").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("idx_sim_origins_org_origin").on(table.organisationId, table.origin)]);
+
+// Per-learner progress for a course. The signed-in user is the learner; this
+// single row survives reload and holds the latest component scores + the
+// derived readiness. One row per (organisation, user, course).
+export const learnerProgress = sqliteTable("learner_progress", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  courseId: text("course_id").notNull(),
+  learningScore: integer("learning_score").notNull().default(0),
+  simulationScore: integer("simulation_score").notNull().default(0),
+  assessmentScore: integer("assessment_score").notNull().default(0),
+  readiness: integer("readiness").notNull().default(0),
+  status: text("status").notNull().default("in-progress"),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_learner_progress_key").on(table.organisationId, table.userId, table.courseId)]);
+
+// Append-only record of individual simulation / assessment attempts.
+export const learnerAttempts = sqliteTable("learner_attempts", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  courseId: text("course_id").notNull(),
+  kind: text("kind").notNull(),
+  refId: text("ref_id").notNull().default(""),
+  score: integer("score").notNull().default(0),
+  detailJson: text("detail_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_learner_attempts_key").on(table.organisationId, table.userId, table.courseId)]);
+
+// Issued readiness credentials, one per (organisation, user, course).
+export const credentials = sqliteTable("credentials", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  courseId: text("course_id").notNull(),
+  learner: text("learner").notNull().default(""),
+  programme: text("programme").notNull().default(""),
+  readiness: integer("readiness").notNull().default(0),
+  breakdownJson: text("breakdown_json").notNull().default("{}"),
+  issuedAt: text("issued_at").notNull(),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_credentials_key").on(table.organisationId, table.userId, table.courseId)]);
+
 // Append-only, tenant-scoped audit trail.
 export const auditEvents = sqliteTable("audit_events", {
   id: text("id").primaryKey(),
