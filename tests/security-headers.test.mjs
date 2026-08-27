@@ -32,6 +32,9 @@ test("CSP accommodates what the app needs without breaking rendering", async () 
   assert.match(csp, /img-src[^;]*blob:/);
   // Vendor simulator embeds allow-listed https sandboxes.
   assert.match(csp, /frame-src[^;]*https:/);
+  // Cloudflare Web Analytics (auto-injected at the edge) must not be blocked.
+  assert.match(csp, /script-src[^;]*static\.cloudflareinsights\.com/);
+  assert.match(csp, /connect-src[^;]*cloudflareinsights\.com/);
   // The app itself cannot be framed elsewhere.
   assert.match(csp, /frame-ancestors 'self'/);
   const html = await response.text();

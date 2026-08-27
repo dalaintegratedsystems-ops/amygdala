@@ -26,9 +26,14 @@ function contentSecurityPolicy(): string {
     "object-src 'none'",
     "img-src 'self' data: blob:",
     "style-src 'self' 'unsafe-inline'",
-    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+    // 'unsafe-inline' + 'wasm-unsafe-eval' cover vinext's un-nonced bootstrap
+    // and client-side pdf.js; static.cloudflareinsights.com is Cloudflare Web
+    // Analytics, which Cloudflare auto-injects at the edge on this zone.
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://static.cloudflareinsights.com",
     "font-src 'self' data:",
-    "connect-src 'self'",
+    // 'self' for the app's own APIs; cloudflareinsights.com is the Web
+    // Analytics beacon endpoint (RUM).
+    "connect-src 'self' https://cloudflareinsights.com",
     "frame-src 'self' https:",
     "child-src 'self' https:",
     "worker-src 'self' blob:",
