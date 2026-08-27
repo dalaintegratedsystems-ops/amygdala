@@ -400,7 +400,7 @@ const OWNER_ADMIN = {
   displayName: "Site Administrator",
   role: "Vendor Administrator",
   organisationId: "org-primary",
-  credential: { salt: "70546e0164b462d9c8c2489e2764e338", iterations: 100000, hash: "9b112b51bc627d93746c2c23248c2146557f067d7b6843c814589dc87c5afd27" },
+  credential: { salt: "70546e0164b462d9c8c2489e2764e338", iterations: 100000, hash: "9b3d65eca40452dfb51daf9ed112b6fc6e4ef5bf9d5878662bde6724ae723686" },
 };
 
 export async function ensureBootstrap(env = {}) {
