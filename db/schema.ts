@@ -50,6 +50,10 @@ export const sources = sqliteTable("sources", {
   explanation: text("explanation").notNull().default(""),
   procedureJson: text("procedure_json").notNull().default("[]"),
   keywordsJson: text("keywords_json").notNull().default("[]"),
+  // Whole-document knowledge for large-document handling: { documentType,
+  // outline, coverage }. JSON blob so the schema stays small and the store
+  // can tolerate its absence during rollout.
+  knowledgeJson: text("knowledge_json").notNull().default("{}"),
   uploadDate: text("upload_date"),
   effectiveDate: text("effective_date"),
   ...timestamps,
@@ -68,6 +72,18 @@ export const courses = sqliteTable("courses", {
   courseJson: text("course_json").notNull(),
   ...timestamps,
 }, (table) => [index("idx_courses_org_status").on(table.organisationId, table.status)]);
+
+// Per-workspace brand kit (logo, colours, font) applied through the app's CSS
+// custom properties. One row per organisation.
+export const brandKits = sqliteTable("brand_kits", {
+  organisationId: text("organisation_id").primaryKey(),
+  workspaceName: text("workspace_name").notNull().default(""),
+  logoKey: text("logo_key"),
+  primaryColor: text("primary_color").notNull().default(""),
+  accentColor: text("accent_color").notNull().default(""),
+  fontFamily: text("font_family").notNull().default(""),
+  ...timestamps,
+});
 
 // Append-only, tenant-scoped audit trail.
 export const auditEvents = sqliteTable("audit_events", {

@@ -23,9 +23,19 @@ function parseArray(value) {
   }
 }
 
+function parseObject(value) {
+  try {
+    const parsed = JSON.parse(value ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 // Map a persisted source row to the flat shape the domain/authoring functions
 // expect (procedure/keywords as arrays).
 function rowToSource(row) {
+  const knowledge = parseObject(row.knowledgeJson);
   return {
     id: row.id,
     organisationId: row.organisationId,
@@ -47,7 +57,20 @@ function rowToSource(row) {
     keywords: parseArray(row.keywordsJson),
     uploadDate: row.uploadDate ?? null,
     effectiveDate: row.effectiveDate ?? null,
+    documentType: knowledge.documentType ?? null,
+    outline: Array.isArray(knowledge.outline) ? knowledge.outline : [],
+    coverage: knowledge.coverage ?? null,
   };
+}
+
+// Serialise the whole-document knowledge (documentType/outline/coverage) into
+// the single knowledge_json column.
+function knowledgeJsonFor(source) {
+  return JSON.stringify({
+    documentType: source.documentType ?? null,
+    outline: Array.isArray(source.outline) ? source.outline : [],
+    coverage: source.coverage ?? null,
+  });
 }
 
 function sourceToRow(source, timestamp) {
@@ -70,6 +93,7 @@ function sourceToRow(source, timestamp) {
     explanation: source.explanation ?? "",
     procedureJson: JSON.stringify(Array.isArray(source.procedure) ? source.procedure : []),
     keywordsJson: JSON.stringify(Array.isArray(source.keywords) ? source.keywords : []),
+    knowledgeJson: knowledgeJsonFor(source),
     uploadDate: source.uploadDate ?? null,
     effectiveDate: source.effectiveDate ?? null,
     createdAt: source.createdAt ?? timestamp,
@@ -161,6 +185,14 @@ function createD1Store(db) {
       }
       if (patch.procedure !== undefined) update.procedureJson = JSON.stringify(patch.procedure);
       if (patch.keywords !== undefined) update.keywordsJson = JSON.stringify(patch.keywords);
+      if (patch.documentType !== undefined || patch.outline !== undefined || patch.coverage !== undefined) {
+        const current = await this.getSource(organisationId, id);
+        update.knowledgeJson = knowledgeJsonFor({
+          documentType: patch.documentType ?? current?.documentType ?? null,
+          outline: patch.outline ?? current?.outline ?? [],
+          coverage: patch.coverage ?? current?.coverage ?? null,
+        });
+      }
       await db.update(schema.sources).set(update).where(and(eq(schema.sources.organisationId, organisationId), eq(schema.sources.id, id)));
       return this.getSource(organisationId, id);
     },
@@ -233,6 +265,36 @@ function createD1Store(db) {
       const rows = await db.select().from(schema.auditEvents).where(eq(schema.auditEvents.organisationId, organisationId)).orderBy(desc(schema.auditEvents.createdAt));
       return rows.map((row) => ({ id: row.id, organisationId: row.organisationId, actor: row.actor, role: row.role, eventType: row.eventType, entityType: row.entityType, entityId: row.entityId, detail: row.detail, createdAt: row.createdAt }));
     },
+
+    async getBrand(organisationId) {
+      try {
+        const rows = await db.select().from(schema.brandKits).where(eq(schema.brandKits.organisationId, organisationId)).limit(1);
+        const row = rows[0];
+        return row ? { organisationId: row.organisationId, workspaceName: row.workspaceName, logoKey: row.logoKey ?? null, primaryColor: row.primaryColor, accentColor: row.accentColor, fontFamily: row.fontFamily } : null;
+      } catch {
+        // Table not yet migrated on this environment — behave as "no brand".
+        return null;
+      }
+    },
+
+    async upsertBrand(organisationId, patch) {
+      const timestamp = now();
+      const existing = await this.getBrand(organisationId);
+      const merged = {
+        organisationId,
+        workspaceName: patch.workspaceName ?? existing?.workspaceName ?? "",
+        logoKey: patch.logoKey !== undefined ? patch.logoKey : existing?.logoKey ?? null,
+        primaryColor: patch.primaryColor ?? existing?.primaryColor ?? "",
+        accentColor: patch.accentColor ?? existing?.accentColor ?? "",
+        fontFamily: patch.fontFamily ?? existing?.fontFamily ?? "",
+      };
+      if (existing) {
+        await db.update(schema.brandKits).set({ ...merged, updatedAt: timestamp }).where(eq(schema.brandKits.organisationId, organisationId));
+      } else {
+        await db.insert(schema.brandKits).values({ ...merged, createdAt: timestamp, updatedAt: timestamp });
+      }
+      return merged;
+    },
   };
 }
 
@@ -245,6 +307,7 @@ function createMemoryStore() {
     sources: new Map(),
     courses: new Map(),
     audit: [],
+    brands: new Map(),
   };
 
   return {
@@ -308,7 +371,7 @@ function createMemoryStore() {
       const source = data.sources.get(id);
       if (!source || source.organisationId !== organisationId) return null;
       const updated = { ...source };
-      for (const key of ["title", "description", "product", "module", "intendedRole", "contentOwner", "type", "version", "status", "approvalStatus", "section", "storageKey", "extractedText", "explanation", "uploadDate", "effectiveDate", "procedure", "keywords"]) {
+      for (const key of ["title", "description", "product", "module", "intendedRole", "contentOwner", "type", "version", "status", "approvalStatus", "section", "storageKey", "extractedText", "explanation", "uploadDate", "effectiveDate", "procedure", "keywords", "documentType", "outline", "coverage"]) {
         if (patch[key] !== undefined) updated[key] = patch[key];
       }
       data.sources.set(id, updated);
@@ -361,6 +424,25 @@ function createMemoryStore() {
 
     async listAudit(organisationId) {
       return data.audit.filter((event) => event.organisationId === organisationId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((event) => ({ ...event }));
+    },
+
+    async getBrand(organisationId) {
+      const brand = data.brands.get(organisationId);
+      return brand ? { ...brand } : null;
+    },
+
+    async upsertBrand(organisationId, patch) {
+      const existing = data.brands.get(organisationId) ?? {};
+      const merged = {
+        organisationId,
+        workspaceName: patch.workspaceName ?? existing.workspaceName ?? "",
+        logoKey: patch.logoKey !== undefined ? patch.logoKey : existing.logoKey ?? null,
+        primaryColor: patch.primaryColor ?? existing.primaryColor ?? "",
+        accentColor: patch.accentColor ?? existing.accentColor ?? "",
+        fontFamily: patch.fontFamily ?? existing.fontFamily ?? "",
+      };
+      data.brands.set(organisationId, merged);
+      return { ...merged };
     },
   };
 }
