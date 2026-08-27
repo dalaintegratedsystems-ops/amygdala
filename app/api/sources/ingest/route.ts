@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { extractKnowledgeAI } from "../../../lib/ai.mjs";
 import { authorizeRequest } from "../../../lib/auth.mjs";
+import { getStore } from "../../../lib/store.mjs";
 
 export async function POST(request: Request) {
   const decision = await authorizeRequest(request, "manage-sources", env as unknown as Record<string, unknown>);
@@ -28,6 +29,19 @@ export async function POST(request: Request) {
   );
 
   if (!result.ok || !result.source || !result.summary) return Response.json({ error: result.message, reason: result.reason, engine: result.engine }, { status: 422 });
-  console.log(JSON.stringify({ event: "source_ingested", actor: decision.principal?.userId, sourceId: result.source.id, engine: result.engine.engine, groundedSteps: result.summary.procedureSteps, timestamp: new Date().toISOString() }));
-  return Response.json(result, { headers: { "cache-control": "no-store" } });
+
+  // Persist the extracted knowledge as a Draft source pending human approval.
+  const store = getStore(env as unknown as Record<string, unknown>);
+  const organisationId = decision.principal?.organisationId;
+  const stored = await store.createSource({
+    ...result.source,
+    id: crypto.randomUUID(),
+    organisationId,
+    status: "Ready for review",
+    approvalStatus: "Pending",
+    uploadDate: new Date().toISOString().slice(0, 10),
+  });
+  await store.recordAudit({ organisationId, actor: decision.principal?.displayName, role: decision.principal?.role, eventType: "source.ingested", entityType: "source", entityId: stored.id, detail: `engine=${result.engine.engine} steps=${result.summary.procedureSteps}` });
+  console.log(JSON.stringify({ event: "source_ingested", actor: decision.principal?.userId, sourceId: stored.id, engine: result.engine.engine, groundedSteps: result.summary.procedureSteps, timestamp: new Date().toISOString() }));
+  return Response.json({ ...result, source: stored }, { headers: { "cache-control": "no-store" } });
 }

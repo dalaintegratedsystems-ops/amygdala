@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sources } from "../app/lib/domain.mjs";
 import { approveCourse, generateCourseFromSource, summariseGeneratedCourse } from "../app/lib/authoring.mjs";
+import { sources } from "./fixtures/sources.mjs";
 
 const projectSource = sources.find((source) => source.id === "src-projects");
 const draftSource = sources.find((source) => source.id === "src-release");

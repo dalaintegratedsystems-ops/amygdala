@@ -125,14 +125,18 @@ export function verifyGrounding(items, text) {
 // default; upgrades to Workers AI (no key) or a BYO LLM (server-side key).
 export function describeExtractor(env = {}) {
   const configured = String(env.AI_ADAPTER ?? "deterministic").toLowerCase();
-  const hasKey = Boolean(env.AI_API_KEY && String(env.AI_API_KEY).length > 0);
+  const hasByoKey = Boolean(env.AI_API_KEY && String(env.AI_API_KEY).length > 0);
+  // A live OpenAI key (used by the real-LLM path) is a first-class trigger, so
+  // the reported engine reflects the live model when the key is present.
+  const hasOpenAiKey = Boolean(env.OPENAI_API_KEY && String(env.OPENAI_API_KEY).length > 0);
   const hasWorkersAi = Boolean(env.AI);
   let engine = "deterministic";
-  if (configured === "live" && hasKey) engine = "byo-llm";
+  if (hasOpenAiKey) engine = "openai-llm";
+  else if (configured === "live" && hasByoKey) engine = "byo-llm";
   else if (hasWorkersAi) engine = "workers-ai";
   return {
     engine,
-    credentialed: hasKey,
+    credentialed: hasOpenAiKey || hasByoKey,
     requiresApiKey: engine === "byo-llm",
     grounding: "span-verified",
     humanApproval: true,
@@ -173,10 +177,10 @@ export function extractKnowledge(input, options = {}) {
 
   const source = {
     id: `up-${slugify(title)}`,
-    organisationId: input.organisationId ?? "org-nexus",
+    organisationId: input.organisationId ?? null,
     title,
     description: `Imported from ${input.filename ?? "document"}.`,
-    product: input.product ?? "NexusFlow",
+    product: input.product ?? "",
     module: moduleName,
     intendedRole: input.intendedRole ?? "All roles",
     version: input.version ?? "1.0",

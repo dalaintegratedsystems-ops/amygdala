@@ -124,27 +124,12 @@ export async function verifySession(token, secret, { now = Date.now() } = {}) {
   };
 }
 
-// ---- user store ------------------------------------------------------
-// Demo users with PBKDF2 credentials (no plaintext at rest). In production
-// this is backed by D1 / your IdP. Demo password (all accounts):
-//   Amygdala-Demo-2026
-export const users = [
-  { userId: "usr-vera", email: "vera@nexusflow.example", displayName: "Vera Ndlovu", organisationId: "org-nexus", role: "Vendor Administrator", credential: { salt: "acc0baff7da15c22c367aae25bedf661", iterations: PBKDF2_ITERATIONS, hash: "b5cfa670ef3fe6fa2a0d2324bf157991608086efe4dfae4d46850f7d318e3921" } },
-  { userId: "usr-theo", email: "theo@nexusflow.example", displayName: "Theo Adeyemi", organisationId: "org-nexus", role: "Training Manager", credential: { salt: "01e0e8d3250e62a159b3e4e514789e5f", iterations: PBKDF2_ITERATIONS, hash: "616687bab2e87886a17256e7fd13e5e93581493bc4ed42fcda22041d3f5dd767" } },
-  { userId: "usr-aisha", email: "aisha@aurora.example", displayName: "Aisha Naidoo", organisationId: "org-aurora", role: "Customer Learner", credential: { salt: "0d11a0825e4fb7e6aaea2bbc10390db2", iterations: PBKDF2_ITERATIONS, hash: "4c092c4a9ab790b6731ba5bc5720c134bfe37ba112711499059298cc2fda2485" } },
-  // Owner admin login (Vendor Administrator). Only the salted PBKDF2 hash is
-  // stored here; rotate the password after first sign-in.
-  { userId: "usr-admin", email: "admin@amygdalalishay.com", displayName: "Site Administrator", organisationId: "org-nexus", role: "Vendor Administrator", credential: { salt: "70546e0164b462d9c8c2489e2764e338", iterations: PBKDF2_ITERATIONS, hash: "9b112b51bc627d93746c2c23248c2146557f067d7b6843c814589dc87c5afd27" } },
-];
-
-export function findUserByEmail(email) {
-  const normalised = String(email ?? "").trim().toLowerCase();
-  return users.find((user) => user.email.toLowerCase() === normalised) ?? null;
-}
-
-export async function authenticate(email, password) {
-  const user = findUserByEmail(email);
-  // Always run a hash to keep timing uniform whether or not the user exists.
+// ---- authentication --------------------------------------------------
+// Users live in the D1 `users` table (via the data store) with PBKDF2
+// credentials — no plaintext and no fictional demo accounts shipped in code.
+// The route loads the user record and passes it here; `authenticate` verifies
+// the password in constant time whether or not the user exists.
+export async function authenticate(user, password) {
   const credential = user?.credential ?? { salt: "0".repeat(32), iterations: PBKDF2_ITERATIONS, hash: "" };
   const ok = await verifyPassword(String(password ?? ""), credential);
   if (!user || !ok) return { ok: false, reason: "invalid-credentials" };

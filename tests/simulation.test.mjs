@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { missions, sources } from "../app/lib/domain.mjs";
 import { buildInteractiveScenario, buildTranscript, escapeXml, generateProcedureDiagramSvg, scoreScenarioAttempt } from "../app/lib/simulation.mjs";
+import { missions, sources } from "./fixtures/sources.mjs";
 
 const projectSource = sources.find((source) => source.id === "src-projects");
 

@@ -68,6 +68,15 @@ test("extractor upgrades to BYO LLM only with a server-side key", () => {
   assert.equal(describeExtractor({ AI: {} }).engine, "workers-ai");
 });
 
+test("extractor reflects the live OpenAI model when a key is present", () => {
+  const engine = describeExtractor({ OPENAI_API_KEY: "sk-live-xxxx" });
+  assert.equal(engine.engine, "openai-llm");
+  assert.equal(engine.credentialed, true);
+  assert.equal(engine.ocrCapable, true);
+  // A live OpenAI key takes priority over the Workers AI binding.
+  assert.equal(describeExtractor({ OPENAI_API_KEY: "sk-live", AI: {} }).engine, "openai-llm");
+});
+
 test("empty or binary-without-text inputs are refused, not hallucinated", () => {
   assert.equal(extractKnowledge({ text: "" }).reason, "empty");
   assert.equal(extractKnowledge({ mimeType: "application/pdf", text: "" }).reason, "needs-ocr");

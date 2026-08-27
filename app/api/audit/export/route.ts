@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
-import { exportAuditEvents, seedAuditEvents } from "../../../lib/security.mjs";
+import { exportAuditEvents } from "../../../lib/security.mjs";
 import { authorizeRequest } from "../../../lib/auth.mjs";
+import { getStore } from "../../../lib/store.mjs";
 
 export async function GET(request: Request) {
   const decision = await authorizeRequest(request, "export-audit", env as unknown as Record<string, unknown>);
@@ -8,9 +9,9 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const format = url.searchParams.get("format") === "csv" ? "csv" : "json";
-  // A tenant only ever exports its own scope.
-  const options = { format, organisationId: decision.principal?.organisationId };
-  const payload = exportAuditEvents(seedAuditEvents, options);
+  const store = getStore(env as unknown as Record<string, unknown>);
+  const events = await store.listAudit(decision.principal?.organisationId);
+  const payload = exportAuditEvents(events, { format, organisationId: decision.principal?.organisationId });
 
   const headers: Record<string, string> = { "cache-control": "no-store" };
   if (format === "csv") {

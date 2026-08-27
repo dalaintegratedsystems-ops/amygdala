@@ -166,21 +166,21 @@ Rules:
 Respond with ONLY a JSON object of the form:
 {"covered": boolean, "answer": string, "citedSourceIds": string[]}`;
 
-export async function answerGroundedQuestionAI(env, params) {
-  const { organisationId, query, mode = "explain", role = "Project Manager", module } = params ?? {};
+export async function answerGroundedQuestionAI(env, sources, params) {
+  const { query, mode = "explain", role = "Project Manager", module } = params ?? {};
 
   // Guardrails first — identical to the deterministic short-circuits, and no
   // model is ever called for invalid input, injection, or empty retrieval.
   if (typeof query !== "string" || query.trim().length < 3 || query.length > 500) {
-    return answerGroundedQuestion(params);
+    return answerGroundedQuestion(sources, params);
   }
   if (isPromptInjection(query)) {
-    return answerGroundedQuestion(params);
+    return answerGroundedQuestion(sources, params);
   }
-  const matches = searchApprovedKnowledge({ organisationId, query, role, module });
+  const matches = searchApprovedKnowledge(sources, { query, role, module });
   const best = matches[0];
   if (!best || best.score < 2) {
-    return answerGroundedQuestion(params);
+    return answerGroundedQuestion(sources, params);
   }
 
   try {
@@ -214,7 +214,7 @@ export async function answerGroundedQuestionAI(env, params) {
 
     const citations = reconcileCitations(parsed.citedSourceIds, retrievedSources);
     if (citations.length === 0) {
-      return answerGroundedQuestion(params);
+      return answerGroundedQuestion(sources, params);
     }
     const status = best.score >= 4 ? "Verified" : "Limited guidance";
     return {
@@ -225,7 +225,7 @@ export async function answerGroundedQuestionAI(env, params) {
       reason: "approved-evidence",
     };
   } catch {
-    return answerGroundedQuestion(params);
+    return answerGroundedQuestion(sources, params);
   }
 }
 

@@ -25,13 +25,16 @@ test("passwords hash and verify, and reject wrong password", async () => {
   assert.equal(await verifyPassword("wrong", credential), false);
 });
 
-test("authenticate accepts the seeded admin and rejects bad input", async () => {
-  const ok = await authenticate("vera@nexusflow.example", "Amygdala-Demo-2026");
+test("authenticate verifies a stored user record and rejects bad input", async () => {
+  const credential = await hashPassword("Amygdala-Demo-2026");
+  const user = { userId: "usr-admin", email: "admin@amygdalalishay.com", displayName: "Site Administrator", role: "Vendor Administrator", organisationId: "org-primary", credential };
+  const ok = await authenticate(user, "Amygdala-Demo-2026");
   assert.equal(ok.ok, true);
   assert.equal(ok.principal.role, "Vendor Administrator");
-  assert.equal(ok.principal.organisationId, "org-nexus");
-  assert.equal((await authenticate("vera@nexusflow.example", "nope")).ok, false);
-  assert.equal((await authenticate("ghost@nowhere.example", "x")).ok, false);
+  assert.equal(ok.principal.organisationId, "org-primary");
+  assert.equal((await authenticate(user, "nope")).ok, false);
+  // A missing user record still runs a constant-time hash and fails closed.
+  assert.equal((await authenticate(null, "x")).ok, false);
 });
 
 test("sessions sign, verify, and carry the principal", async () => {

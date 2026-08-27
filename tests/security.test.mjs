@@ -4,19 +4,10 @@ import {
   authorize,
   capabilitiesForRole,
   describeAdapter,
-  enterpriseIdentityConfig,
   exportAuditEvents,
   recordAuditEvent,
-  resolveIdentity,
-  seedAuditEvents,
 } from "../app/lib/security.mjs";
-
-test("resolves demo identities by token", () => {
-  const vera = resolveIdentity("tok-vera");
-  assert.equal(vera.role, "Vendor Administrator");
-  assert.equal(vera.organisationId, "org-nexus");
-  assert.equal(resolveIdentity("tok-unknown"), null);
-});
+import { seedAuditEvents } from "./fixtures/analytics.mjs";
 
 test("RBAC grants and denies by capability", () => {
   assert.equal(authorize({ role: "Vendor Administrator", action: "publish-source", actorOrganisationId: "org-nexus" }).allowed, true);
@@ -25,20 +16,19 @@ test("RBAC grants and denies by capability", () => {
 });
 
 test("tenant isolation blocks cross-tenant access", () => {
-  // A customer learner cannot reach another customer org.
   const cross = authorize({ role: "Customer Learner", action: "ask-guide", actorOrganisationId: "org-aurora", resourceOrganisationId: "org-meridian" });
   assert.equal(cross.allowed, false);
   assert.equal(cross.reason, "tenant-isolation");
 });
 
-test("a vendor tenant may reach the customers it owns", () => {
-  const vendorToCustomer = authorize({ role: "Vendor Administrator", action: "view-ai-activity", actorOrganisationId: "org-nexus", resourceOrganisationId: "org-aurora" });
-  assert.equal(vendorToCustomer.allowed, true);
+test("a principal may act within its own organisation", () => {
+  const sameOrg = authorize({ role: "Vendor Administrator", action: "view-ai-activity", actorOrganisationId: "org-nexus", resourceOrganisationId: "org-nexus" });
+  assert.equal(sameOrg.allowed, true);
 });
 
 test("capabilities are role-scoped", () => {
-  assert.ok(capabilitiesForRole("Vendor Administrator").includes("manage-identity"));
-  assert.equal(capabilitiesForRole("Customer Learner").includes("manage-identity"), false);
+  assert.ok(capabilitiesForRole("Vendor Administrator").includes("manage-sources"));
+  assert.equal(capabilitiesForRole("Customer Learner").includes("manage-sources"), false);
 });
 
 test("adapter stays deterministic-grounded without a credential", () => {
@@ -48,14 +38,10 @@ test("adapter stays deterministic-grounded without a credential", () => {
   assert.equal(adapter.serverSideOnly, true);
 });
 
-test("adapter only goes live when a server-side key is present", () => {
+test("adapter goes live with a server-side key", () => {
   assert.equal(describeAdapter({ AI_ADAPTER: "live" }).mode, "deterministic");
   assert.equal(describeAdapter({ AI_ADAPTER: "live", AI_API_KEY: "sk-demo" }).mode, "live");
-});
-
-test("enterprise identity config exposes SSO and SCIM posture", () => {
-  assert.match(enterpriseIdentityConfig.sso.protocol, /SAML|OIDC/);
-  assert.equal(enterpriseIdentityConfig.scim.protocol, "SCIM 2.0");
+  assert.equal(describeAdapter({ OPENAI_API_KEY: "sk-live" }).mode, "live");
 });
 
 test("audit export produces scoped CSV and JSON", () => {

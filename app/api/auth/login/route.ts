@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { authenticate, buildSessionCookie, createSession, getSessionSecret } from "../../../lib/auth.mjs";
+import { ensureBootstrap } from "../../../lib/store.mjs";
 
 // Basic brute-force throttle per client IP.
 const attempts = new Map<string, { count: number; startedAt: number }>();
@@ -22,7 +23,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  const result = await authenticate(body?.email, body?.password);
+  // Bootstrap the workspace + admin on first boot, then verify against the DB.
+  const store = await ensureBootstrap(env as unknown as Record<string, unknown>);
+  const user = await store.findUserByEmail(body?.email);
+  const result = await authenticate(user, body?.password);
   if (!result.ok || !result.principal) return Response.json({ error: "Invalid email or password." }, { status: 401 });
   const principal = result.principal;
 
