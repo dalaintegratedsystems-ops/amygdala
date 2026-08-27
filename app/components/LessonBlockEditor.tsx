@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { generateProcedureDiagramSvg } from "../lib/simulation.mjs";
-import type { Citation, LessonBlock, BlockType } from "./types";
+import type { Citation, LessonBlock, BlockType, SimulationDefinition } from "./types";
 
 const BLOCK_LABELS: Record<BlockType, string> = {
   text: "Text",
@@ -13,7 +13,20 @@ const BLOCK_LABELS: Record<BlockType, string> = {
   quiz: "Quiz",
   "procedure-diagram": "Diagram",
   "simulation-step": "Simulation step",
+  simulation: "Simulation",
 };
+
+// Cache the workspace's simulations so every simulation block doesn't refetch.
+let simulationsCache: Promise<SimulationDefinition[]> | null = null;
+function loadSimulations(): Promise<SimulationDefinition[]> {
+  if (!simulationsCache) {
+    simulationsCache = fetch("/api/simulations")
+      .then((response) => (response.ok ? response.json() : { simulations: [] }))
+      .then((data: { simulations?: SimulationDefinition[] }) => data.simulations ?? [])
+      .catch(() => []);
+  }
+  return simulationsCache;
+}
 
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `blk-${Math.random().toString(36).slice(2)}`);
 
@@ -27,6 +40,7 @@ export function newBlock(type: BlockType, citation?: Citation, seed?: Partial<Le
     case "quiz": return { ...base, type, question: "", options: ["", ""], correct: 0, ...(seed as object) } as LessonBlock;
     case "procedure-diagram": return { ...base, type, title: "Procedure", steps: [], ...(seed as object) } as LessonBlock;
     case "simulation-step": return { ...base, type, label: "", hint: "", coaching: "", ...(seed as object) } as LessonBlock;
+    case "simulation": return { ...base, type, simulationId: "", title: "", ...(seed as object) } as LessonBlock;
     default: return { ...base, type: "text", text: "", ...(seed as object) } as LessonBlock;
   }
 }
@@ -34,6 +48,32 @@ export function newBlock(type: BlockType, citation?: Citation, seed?: Partial<Le
 function CitationTag({ citation }: { citation?: Citation }) {
   if (!citation) return null;
   return <span className="citation-inline">▣ {citation.title} · v{citation.version}{citation.section ? ` · ${citation.section}` : ""}</span>;
+}
+
+function SimulationBlockBody({ block, update }: { block: Extract<LessonBlock, { type: "simulation" }>; update: (patch: Partial<LessonBlock>) => void }) {
+  const [simulations, setSimulations] = useState<SimulationDefinition[]>([]);
+  useEffect(() => { let active = true; loadSimulations().then((list) => { if (active) setSimulations(list); }); return () => { active = false; }; }, []);
+  const selected = simulations.find((simulation) => simulation.id === block.simulationId);
+  return (
+    <div className="block-simulation-edit">
+      <select
+        aria-label="Vendor simulation"
+        value={block.simulationId}
+        onChange={(event) => {
+          const simulation = simulations.find((entry) => entry.id === event.target.value);
+          update({ simulationId: event.target.value, title: simulation?.title ?? "" } as Partial<LessonBlock>);
+        }}
+      >
+        <option value="">Select a vendor simulation…</option>
+        {simulations.map((simulation) => <option key={simulation.id} value={simulation.id}>{simulation.title} · {simulation.mode === "iframe" ? "embed" : "walkthrough"} ({simulation.status})</option>)}
+      </select>
+      {selected ? (
+        <p className="block-sim-ref">▶ Learners will run <strong>{selected.title}</strong> ({selected.steps.length} steps). {selected.status !== "Published" ? "Publish it in the Simulations builder to make it available." : "Published."}</p>
+      ) : (
+        <p className="model-note">Build simulations in the Simulations workspace, then reference one here.</p>
+      )}
+    </div>
+  );
 }
 
 function BlockBody({ block, update }: { block: LessonBlock; update: (patch: Partial<LessonBlock>) => void }) {
@@ -112,6 +152,8 @@ function BlockBody({ block, update }: { block: LessonBlock; update: (patch: Part
           <input aria-label="Step coaching" value={block.coaching} onChange={(event) => update({ coaching: event.target.value } as Partial<LessonBlock>)} placeholder="Coaching for a wrong choice" />
         </div>
       );
+    case "simulation":
+      return <SimulationBlockBody block={block} update={update} />;
     default:
       return null;
   }

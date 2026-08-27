@@ -48,9 +48,62 @@ export type LessonBlock =
   | { id: string; type: "embed"; url: string; caption: string; citation?: Citation }
   | { id: string; type: "quiz"; question: string; options: string[]; correct: number; citation?: Citation }
   | { id: string; type: "procedure-diagram"; title: string; steps: string[]; citation?: Citation }
-  | { id: string; type: "simulation-step"; label: string; hint: string; coaching: string; citation?: Citation };
+  | { id: string; type: "simulation-step"; label: string; hint: string; coaching: string; citation?: Citation }
+  | { id: string; type: "simulation"; simulationId: string; title: string; citation?: Citation };
 
 export type BlockType = LessonBlock["type"];
+
+// ---- vendor SaaS simulation ------------------------------------------
+
+export type SimulationHotspot = { x: number; y: number; w: number; h: number };
+
+export type SimulationStep = {
+  id: string;
+  label: string;
+  coaching: string;
+  hotspot: SimulationHotspot | null;
+  screenIndex: number;
+  match: { event: string } | null;
+};
+
+export type SimulationScreen = { key: string; url: string; alt: string; width: number | null; height: number | null };
+
+export type SimulationDefinition = {
+  id: string;
+  organisationId?: string;
+  title: string;
+  description: string;
+  mode: "iframe" | "screenshot";
+  targetUrl: string;
+  embeddable: boolean;
+  bridgeEnabled: boolean;
+  status: string;
+  steps: SimulationStep[];
+  screens: SimulationScreen[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type SimOrigin = { id: string; origin: string; label: string; createdAt: string };
+
+export type LearnerProgress = {
+  courseId: string;
+  learningScore: number;
+  simulationScore: number;
+  assessmentScore: number;
+  readiness: number;
+  status: string;
+  updatedAt?: string;
+};
+
+export type IssuedCredential = {
+  courseId: string;
+  learner: string;
+  programme: string;
+  readiness: number;
+  breakdown: { learning?: number; simulation?: number; assessment?: number };
+  issuedAt: string;
+};
 
 export type CourseModule = { id: string; label: string; title: string; duration: number; citation: Citation };
 export type CourseLesson = { id: string; moduleId?: string; title: string; content: string; label: string; citation: Citation; blocks?: LessonBlock[] };

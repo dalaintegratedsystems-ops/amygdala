@@ -8,7 +8,10 @@ import { platformRoleCapabilities } from "./lib/security.mjs";
 import { competencyModels, defaultCompetencyModel } from "./lib/analytics.mjs";
 import PromoIntro from "./PromoIntro";
 import { CourseWizard } from "./components/CourseWizard";
+import { SimulationBuilder } from "./components/SimulationBuilder";
+import { SimulationRunner } from "./components/SimulationRunner";
 import { useBrandKit } from "./components/BrandKit";
+import type { SimulationDefinition, SimOrigin, LearnerProgress } from "./components/types";
 
 // All enterprise APIs authenticate via the HttpOnly session cookie (sent
 // automatically on same-origin fetches); RBAC + tenant isolation are enforced
@@ -179,6 +182,7 @@ const adminNavigation: Array<[string, string, string]> = [
   ["/admin/command-centre", "Command Centre", "◫"],
   ["/admin/knowledge-vault", "Knowledge Vault", "▣"],
   ["/admin/training-studio", "Training Studio", "✦"],
+  ["/admin/simulations", "Simulations", "◇"],
   ["/admin/programmes", "Programmes", "▤"],
   ["/admin/ai-activity", "AI activity", "⌁"],
   ["/admin/analytics", "Analytics", "↗"],
@@ -603,6 +607,7 @@ function AdminApp({ path, setPath, session }: { path: string; setPath: (path: st
   if (path === "/admin/command-centre") content = <CommandCentre session={session} setPath={setPath} />;
   else if (path === "/admin/knowledge-vault") content = <KnowledgeVault session={session} />;
   else if (path === "/admin/training-studio") content = <CourseWizard onPreviewLearner={() => navigate("/learner/home", setPath)} />;
+  else if (path === "/admin/simulations") content = <SimulationBuilder />;
   else if (path === "/admin/programmes") content = <Programmes setPath={setPath} />;
   else if (path === "/admin/ai-activity") content = <AIActivity />;
   else if (path === "/admin/analytics") content = <AnalyticsPage />;
@@ -650,24 +655,43 @@ function ProductGuide() {
 
 // ---- learner: course-driven pages ------------------------------------
 
-function LearnerHome({ courses, loading, selectCourse, setPath }: { courses: StoredCourse[]; loading: boolean; selectCourse: (id: string) => void; setPath: (path: string) => void }) {
+function LearnerHome({ courses, loading, selectCourse, setPath, progress }: { courses: StoredCourse[]; loading: boolean; selectCourse: (id: string) => void; setPath: (path: string) => void; progress: LearnerProgress | null }) {
   if (loading) return <div className="page-content"><EmptyState title="Loading your courses…" /></div>;
   if (courses.length === 0) return <div className="page-content"><div className="page-heading"><div><span className="eyebrow">Your learning</span><h1>No published courses yet</h1><p>Published courses from your workspace appear here.</p></div></div><EmptyState icon="✦" title="Nothing to learn just yet" action={<button className="button button-secondary" onClick={() => navigate("/admin/training-studio", setPath)}>Go to Training Studio (admin)</button>}>Ask a workspace administrator to upload a source and publish a course. Once published, it will show up here ready to practise.</EmptyState></div>;
   return (
     <div className="page-content learner-home">
-      <div className="learner-welcome"><div><span className="eyebrow">Your learning</span><h1>Build product capability.</h1><p>Choose a published course to learn, practise in a safe simulation and validate your readiness.</p></div><ProgressRing value={0} label="Pathway completion" /></div>
+      <div className="learner-welcome"><div><span className="eyebrow">Your learning</span><h1>Build product capability.</h1><p>Choose a published course to learn, practise in a safe simulation and validate your readiness.</p></div><ProgressRing value={progress?.readiness ?? 0} label="Readiness" /></div>
       <div className="module-card-grid">{courses.map((entry) => <article key={entry.id}><span className="module-symbol practise">◇</span><span className="module-card-copy"><small>{entry.role || "Course"} · {entry.course.simulation.steps.length} steps</small><strong>{entry.title}</strong><em>Grounded to {entry.course.citation.title}</em></span><button onClick={() => { selectCourse(entry.id); navigate("/learner/simulator", setPath); }} aria-label={`Start ${entry.title}`}>→</button></article>)}</div>
     </div>
   );
 }
 
-function Simulator({ course, onComplete, captions = true, setPath }: { course: StoredCourse | null; onComplete: (score: number) => void; captions?: boolean; setPath: (path: string) => void }) {
+function Simulator({ course, onComplete, captions = true, setPath, vendorSims, allowedOrigins }: { course: StoredCourse | null; onComplete: (score: number, refId?: string) => void; captions?: boolean; setPath: (path: string) => void; vendorSims: SimulationDefinition[]; allowedOrigins: SimOrigin[] }) {
   const steps = course?.course.simulation.steps ?? [];
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState(0);
   const [complete, setComplete] = useState(false);
   const [coaching, setCoaching] = useState("");
+  const [activeSim, setActiveSim] = useState<SimulationDefinition | null>(null);
   if (!course) return <div className="page-content"><div className="page-heading"><div><span className="eyebrow">Safe Product Simulator</span><h1>Practise without production risk.</h1></div></div><EmptyState icon="◇" title="Pick a course first" action={<button className="button button-primary" onClick={() => navigate("/learner/home", setPath)}>Choose a course →</button>}>Select a published course from your learning home to start a guided simulation.</EmptyState></div>;
+
+  // Vendor product simulation: run the authored guided overlay on top of a
+  // sandboxed embed or screenshot walkthrough. Completion persists an attempt.
+  if (activeSim) {
+    return (
+      <div className="page-content simulator-page">
+        <div className="page-heading"><div><span className="eyebrow">Vendor product simulation</span><h1>{activeSim.title}</h1><p>{activeSim.description || "Practise this workflow safely — never against a production system."}</p></div><button className="button button-secondary" onClick={() => setActiveSim(null)}>← All simulations</button></div>
+        <SimulationRunner
+          simulation={activeSim}
+          allowedOrigins={allowedOrigins}
+          onComplete={(result) => onComplete(result.score, activeSim.id)}
+          onExit={() => setActiveSim(null)}
+        />
+        <div className="sim-runner-continue"><button className="button button-primary" onClick={() => navigate("/learner/assessment", setPath)}>Continue to assessment →</button></div>
+      </div>
+    );
+  }
+
   const alternatives = ["Open Reports", "Archive workspace", "Change billing", "Delete project"];
   function choose(label: string) {
     if (label === steps[step]?.label) {
@@ -679,7 +703,22 @@ function Simulator({ course, onComplete, captions = true, setPath }: { course: S
       setCoaching(steps[step]?.coaching ?? `That is not the approved next action. Follow step ${step + 1}: “${steps[step]?.label}”.`);
     }
   }
-  return <div className="page-content simulator-page"><div className="page-heading"><div><span className="eyebrow">Safe Product Simulator</span><h1>Practise {course.title} without production risk.</h1><p>Interactive missions use a fictional workspace and the approved procedure.</p></div></div><div className="simulator-layout"><aside className="panel mission-brief"><span className="tiny-label">Mission objective</span><h2>{course.course.simulation.title}</h2><div className="brief-meta"><span><small>Steps</small><strong>{steps.length}</strong></span><span><small>Attempt</small><strong>#1 · {errors} errors</strong></span></div><div className="mission-steps">{steps.map((item, index) => <div className={index < step || complete ? "done" : index === step ? "active" : ""} key={item.label + index}><span>{index < step || complete ? "✓" : index + 1}</span><strong>{item.label}</strong></div>)}</div>{!complete && steps[step]?.hint && <div className="hint-card"><span>✦</span><p><strong>Progressive hint</strong>{steps[step].hint}</p></div>}<div className="approved-ref"><span>▣</span><p><small>Approved reference</small><strong>{course.course.citation.title}</strong></p></div><div className="mission-visual"><span className="tiny-label">Visual walkthrough</span><ProcedureDiagram steps={steps.map((item) => item.label)} title={course.course.simulation.title} accent="violet" captions={captions} /></div></aside><section className="simulation-window"><div className="sim-browser"><div className="sim-browser-bar"><span><i /><i /><i /></span><strong>Training workspace</strong><em>SIMULATION</em></div><div className="nexus-app"><main><div className="nexus-top"><div><small>Training</small><h2>{course.title}</h2></div><span className="fictional-chip">Fictional data</span></div>{complete ? <div className="simulation-success"><span>✓</span><h2>Mission complete</h2><p>You followed the approved procedure with {errors} {errors === 1 ? "error" : "errors"}.</p><strong>{Math.max(60, 100 - errors * 8)}% practical competency</strong><button className="button button-primary" onClick={() => navigate("/learner/assessment", setPath)}>Continue to assessment →</button></div> : <div className="nexus-canvas"><div className="canvas-copy"><span className="tiny-label">Current action</span><h3>{steps[step]?.label}</h3><p>Choose the correct approved action.</p></div><div className="sim-actions"><button className="correct-hotspot" onClick={() => choose(steps[step].label)}><span>＋</span>{steps[step].label}<i>Next approved action</i></button>{alternatives.slice(0, 2).map((item) => <button key={item} onClick={() => choose(item)}>{item}</button>)}</div>{coaching && <div className="sim-coaching" role="alert"><span>!</span><p>{coaching}</p></div>}</div>}</main></div></div></section></div></div>;
+  return <div className="page-content simulator-page"><div className="page-heading"><div><span className="eyebrow">Safe Product Simulator</span><h1>Practise {course.title} without production risk.</h1><p>Interactive missions use a fictional workspace and the approved procedure.</p></div></div>
+    {vendorSims.length > 0 && (
+      <section className="panel sim-vendor-launch">
+        <div className="panel-header"><div><span className="tiny-label">Vendor product simulations</span><h2>Practise in the real product, safely</h2></div><span className="sim-flag">SIMULATION — not production</span></div>
+        <div className="sim-launch-grid">
+          {vendorSims.map((sim) => (
+            <article key={sim.id}>
+              <span className={`sim-mode-dot ${sim.mode}`} aria-hidden="true" />
+              <span className="sim-launch-copy"><strong>{sim.title}</strong><small>{sim.mode === "iframe" ? "Sandboxed embed" : "Guided walkthrough"} · {sim.steps.length} {sim.steps.length === 1 ? "step" : "steps"}</small></span>
+              <button type="button" className="button button-secondary button-small" onClick={() => setActiveSim(sim)}>Launch <span>→</span></button>
+            </article>
+          ))}
+        </div>
+      </section>
+    )}
+    <div className="simulator-layout"><aside className="panel mission-brief"><span className="tiny-label">Mission objective</span><h2>{course.course.simulation.title}</h2><div className="brief-meta"><span><small>Steps</small><strong>{steps.length}</strong></span><span><small>Attempt</small><strong>#1 · {errors} errors</strong></span></div><div className="mission-steps">{steps.map((item, index) => <div className={index < step || complete ? "done" : index === step ? "active" : ""} key={item.label + index}><span>{index < step || complete ? "✓" : index + 1}</span><strong>{item.label}</strong></div>)}</div>{!complete && steps[step]?.hint && <div className="hint-card"><span>✦</span><p><strong>Progressive hint</strong>{steps[step].hint}</p></div>}<div className="approved-ref"><span>▣</span><p><small>Approved reference</small><strong>{course.course.citation.title}</strong></p></div><div className="mission-visual"><span className="tiny-label">Visual walkthrough</span><ProcedureDiagram steps={steps.map((item) => item.label)} title={course.course.simulation.title} accent="violet" captions={captions} /></div></aside><section className="simulation-window"><div className="sim-browser"><div className="sim-browser-bar"><span><i /><i /><i /></span><strong>Training workspace</strong><em>SIMULATION</em></div><div className="nexus-app"><main><div className="nexus-top"><div><small>Training</small><h2>{course.title}</h2></div><span className="fictional-chip">Fictional data</span></div>{complete ? <div className="simulation-success"><span>✓</span><h2>Mission complete</h2><p>You followed the approved procedure with {errors} {errors === 1 ? "error" : "errors"}.</p><strong>{Math.max(60, 100 - errors * 8)}% practical competency</strong><button className="button button-primary" onClick={() => navigate("/learner/assessment", setPath)}>Continue to assessment →</button></div> : <div className="nexus-canvas"><div className="canvas-copy"><span className="tiny-label">Current action</span><h3>{steps[step]?.label}</h3><p>Choose the correct approved action.</p></div><div className="sim-actions"><button className="correct-hotspot" onClick={() => choose(steps[step].label)}><span>＋</span>{steps[step].label}<i>Next approved action</i></button>{alternatives.slice(0, 2).map((item) => <button key={item} onClick={() => choose(item)}>{item}</button>)}</div>{coaching && <div className="sim-coaching" role="alert"><span>!</span><p>{coaching}</p></div>}</div>}</main></div></div></section></div></div>;
 }
 
 function Assessment({ course, simulationScore, onComplete, setPath }: { course: StoredCourse | null; simulationScore: number; onComplete: (score: number) => void; setPath: (path: string) => void }) {
@@ -700,16 +739,27 @@ function Assessment({ course, simulationScore, onComplete, setPath }: { course: 
   return <div className="page-content assessment-page"><div className="assessment-shell"><div className="assessment-sidebar"><span className="eyebrow">Final validation</span><h1>Product knowledge assessment</h1><p>Grounded questions from the approved source. The pass threshold is {passThreshold}%.</p><div className="assessment-metrics"><span><small>Questions</small><strong>{questions.length}</strong></span><span><small>Pass mark</small><strong>{passThreshold}%</strong></span><span><small>Simulation</small><strong>{simulationScore}%</strong></span></div></div><div className="diagnostic-card"><div className="step-progress"><span>Question {index + 1} of {questions.length}</span><progress value={index + 1} max={questions.length} /></div><h2>{question.question}</h2><div className="answer-options">{question.options.map((option, optionIndex) => <button key={option + optionIndex} onClick={() => answer(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}<i>›</i></button>)}</div><p className="assessment-note">Incorrect responses recommend the relevant lesson. AI cannot answer assessed questions for you.</p></div></div></div>;
 }
 
-function Results({ course, simulationScore, assessmentScore, setPath }: { course: StoredCourse | null; simulationScore: number; assessmentScore: number; setPath: (path: string) => void }) {
-  const learningScore = course ? 100 : 0;
+function Results({ learningScore, simulationScore, assessmentScore, setPath }: { learningScore: number; simulationScore: number; assessmentScore: number; setPath: (path: string) => void }) {
   const readiness = calculateReadiness({ lessons: learningScore, simulation: simulationScore, assessment: assessmentScore });
   return <div className="page-content results-page"><div className="results-hero"><div className="result-glow" /><span className="eyebrow">Verified readiness result</span><ProgressRing value={readiness} label="Overall readiness" /><h1>{readiness >= 80 ? "Ready for confident product use." : "On track. Complete the recommended practice."}</h1><p>Your result combines learning, simulation competence and the final knowledge assessment.</p><StatusPill value={readiness >= 80 ? "Ready for access" : "On track"} /></div><div className="result-breakdown"><article><span className="result-weight">30%</span><strong>Learning completion</strong><b>{learningScore}%</b><progress value={learningScore} max="100" /><small>Course lessons reviewed</small></article><article><span className="result-weight">40%</span><strong>Simulation competency</strong><b>{simulationScore}%</b><progress value={simulationScore} max="100" /><small>Practical mission performance</small></article><article><span className="result-weight">30%</span><strong>Final assessment</strong><b>{assessmentScore}%</b><progress value={assessmentScore} max="100" /><small>Grounded knowledge check</small></article></div><div className="formula-banner"><span>Transparent calculation</span><strong>({learningScore} × 0.30) + ({simulationScore} × 0.40) + ({assessmentScore} × 0.30) = {readiness}%</strong><em>AI cannot change this formula.</em></div><div className="result-actions"><button className="button button-secondary" onClick={() => navigate("/learner/home", setPath)}>Back to learning</button><button className="button button-primary" onClick={() => navigate("/learner/certificate", setPath)}>View certificate →</button></div></div>;
 }
 
-function Certificate({ course, session, simulationScore, assessmentScore }: { course: StoredCourse | null; session: SessionUser | null; simulationScore: number; assessmentScore: number }) {
-  const learningScore = course ? 100 : 0;
+function Certificate({ course, session, learningScore, simulationScore, assessmentScore }: { course: StoredCourse | null; session: SessionUser | null; learningScore: number; simulationScore: number; assessmentScore: number }) {
   const readiness = calculateReadiness({ lessons: learningScore, simulation: simulationScore, assessment: assessmentScore });
-  const issued = new Date().toISOString().slice(0, 10);
+  const [issuedAt, setIssuedAt] = useState<string | null>(null);
+  // Persist an issued readiness credential for the signed-in learner. The
+  // server recomputes readiness from stored progress, so the credential is
+  // always consistent and survives reload.
+  useEffect(() => {
+    if (!course) return;
+    let active = true;
+    fetch("/api/learner/credentials", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseId: course.id }) })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { credential?: { issuedAt?: string } } | null) => { if (active && data?.credential?.issuedAt) setIssuedAt(data.credential.issuedAt); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [course]);
+  const issued = (issuedAt ?? new Date().toISOString()).slice(0, 10);
   const certificate = { learner: session?.displayName ?? "Learner", programme: course?.title ?? "Product readiness", readiness, issued, breakdown: { learning: learningScore, simulation: simulationScore, assessment: assessmentScore } };
   return (
     <div className="page-content certificate-page">
@@ -743,8 +793,9 @@ function LearnerApp({ path, setPath, session }: { path: string; setPath: (path: 
   const [courses, setCourses] = useState<StoredCourse[]>([]);
   const [loadingCourses, setLoadingCourses] = useState(true);
   const [selectedCourseId, setSelectedCourseId] = useState("");
-  const [simulationScore, setSimulationScore] = useState(0);
-  const [assessmentScore, setAssessmentScore] = useState(0);
+  const [progress, setProgress] = useState<LearnerProgress | null>(null);
+  const [vendorSims, setVendorSims] = useState<SimulationDefinition[]>([]);
+  const [allowedOrigins, setAllowedOrigins] = useState<SimOrigin[]>([]);
   const [reduced, setReduced] = useState(false);
   const [lowPerformance, setLowPerformance] = useState(false);
   const [twoD, setTwoD] = useState(false);
@@ -755,16 +806,66 @@ function LearnerApp({ path, setPath, session }: { path: string; setPath: (path: 
     fetch("/api/courses").then((response) => (response.ok ? response.json() : { courses: [] })).then((data) => { if (active) { setCourses(data.courses ?? []); setLoadingCourses(false); } }).catch(() => { if (active) setLoadingCourses(false); });
     return () => { active = false; };
   }, []);
+  // Load published vendor simulations + the embeddable-origin allow-list so the
+  // learner simulator can safely run them.
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      fetch("/api/simulations").then((response) => (response.ok ? response.json() : { simulations: [] })).catch(() => ({ simulations: [] })),
+      fetch("/api/simulations/origins").then((response) => (response.ok ? response.json() : { origins: [] })).catch(() => ({ origins: [] })),
+    ]).then(([sims, origs]) => { if (!active) return; setVendorSims(sims.simulations ?? []); setAllowedOrigins(origs.origins ?? []); });
+    return () => { active = false; };
+  }, []);
+
   const selectedCourse = courses.find((entry) => entry.id === selectedCourseId) ?? courses[0] ?? null;
+  const courseId = selectedCourse?.id;
+
+  // Hydrate persisted progress whenever the active course changes so scores,
+  // readiness and completion survive reloads. Learning is marked once the
+  // learner opens a course (this app has no separate lesson reader).
+  useEffect(() => {
+    let active = true;
+    if (!courseId) return () => { active = false; };
+    fetch(`/api/learner/progress?courseId=${encodeURIComponent(courseId)}`)
+      .then((response) => (response.ok ? response.json() : { progress: null }))
+      .then(async (data: { progress: LearnerProgress | null }) => {
+        if (!active) return;
+        let current = data.progress;
+        if (!current || current.learningScore < 100) {
+          const saved = await fetch("/api/learner/progress", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseId, learningScore: 100 }) })
+            .then((response) => (response.ok ? response.json() : null)).catch(() => null) as { progress: LearnerProgress } | null;
+          if (saved?.progress) current = saved.progress;
+        }
+        if (active) setProgress(current);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [courseId]);
+
+  const simulationScore = progress?.simulationScore ?? 0;
+  const assessmentScore = progress?.assessmentScore ?? 0;
+  const learningScore = progress?.learningScore ?? (selectedCourse ? 100 : 0);
+
+  // Record an attempt (persisted, append-only) and fold its score into the
+  // learner's stored progress. The server recomputes readiness.
+  async function recordAttempt(kind: string, score: number, refId?: string, detail?: Record<string, unknown>) {
+    if (!courseId) return;
+    try {
+      const response = await fetch("/api/learner/attempts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ courseId, kind, score, refId, detail }) });
+      if (response.ok) { const data = (await response.json()) as { progress: LearnerProgress }; if (data.progress) setProgress(data.progress); }
+    } catch { /* offline: keep local UI responsive */ }
+  }
+
+  const publishedSims = vendorSims.filter((sim) => sim.status === "Published");
 
   let content: React.ReactNode;
   if (path === "/learner/guide") content = <ProductGuide />;
-  else if (path === "/learner/simulator") content = <Simulator course={selectedCourse} onComplete={setSimulationScore} captions={captions} setPath={setPath} />;
-  else if (path === "/learner/assessment") content = <Assessment course={selectedCourse} simulationScore={simulationScore} onComplete={setAssessmentScore} setPath={setPath} />;
-  else if (path === "/learner/results") content = <Results course={selectedCourse} simulationScore={simulationScore} assessmentScore={assessmentScore} setPath={setPath} />;
-  else if (path === "/learner/certificate") content = <Certificate course={selectedCourse} session={session} simulationScore={simulationScore} assessmentScore={assessmentScore} />;
+  else if (path === "/learner/simulator") content = <Simulator course={selectedCourse} onComplete={(score, refId) => recordAttempt(refId ? "vendor-simulation" : "simulation", score, refId)} captions={captions} setPath={setPath} vendorSims={publishedSims} allowedOrigins={allowedOrigins} />;
+  else if (path === "/learner/assessment") content = <Assessment course={selectedCourse} simulationScore={simulationScore} onComplete={(score) => recordAttempt("assessment", score)} setPath={setPath} />;
+  else if (path === "/learner/results") content = <Results learningScore={learningScore} simulationScore={simulationScore} assessmentScore={assessmentScore} setPath={setPath} />;
+  else if (path === "/learner/certificate") content = <Certificate course={selectedCourse} session={session} learningScore={learningScore} simulationScore={simulationScore} assessmentScore={assessmentScore} />;
   else if (path === "/learner/profile") content = <AccessibilitySettings reduced={reduced} setReduced={setReduced} lowPerformance={lowPerformance} setLowPerformance={setLowPerformance} twoD={twoD} setTwoD={setTwoD} captions={captions} setCaptions={setCaptions} />;
-  else content = <LearnerHome courses={courses} loading={loadingCourses} selectCourse={setSelectedCourseId} setPath={setPath} />;
+  else content = <LearnerHome courses={courses} loading={loadingCourses} selectCourse={setSelectedCourseId} setPath={setPath} progress={progress} />;
   return <Shell mode="learner" path={path} setPath={setPath} session={session}>{content}</Shell>;
 }
 
