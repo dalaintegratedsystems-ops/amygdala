@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import { resolveRequestIdentity } from "../../../lib/auth.mjs";
+import { getSessionSecret, resolveRequestIdentity } from "../../../lib/auth.mjs";
+import { decorateCredential } from "../../../lib/credentials.mjs";
 import { getStore } from "../../../lib/store.mjs";
 import { calculateReadiness } from "../../../lib/domain.mjs";
 
@@ -12,12 +13,14 @@ export async function GET(request: Request) {
   if (!principal) return Response.json({ error: "Sign in to view your credentials." }, { status: 401 });
   const store = getStore(env as unknown as RuntimeEnv);
   const courseId = new URL(request.url).searchParams.get("courseId");
+  const secret = getSessionSecret(env as unknown as RuntimeEnv);
   if (courseId) {
     const credential = await store.getCredential(principal.organisationId, principal.userId, courseId);
-    return Response.json({ credential }, { headers: { "cache-control": "no-store" } });
+    return Response.json({ credential: credential ? await decorateCredential(credential, secret) : null }, { headers: { "cache-control": "no-store" } });
   }
   const credentials = await store.listCredentials(principal.organisationId, principal.userId);
-  return Response.json({ credentials }, { headers: { "cache-control": "no-store" } });
+  const decorated = await Promise.all(credentials.map((cred: Record<string, unknown>) => decorateCredential(cred, secret)));
+  return Response.json({ credentials: decorated }, { headers: { "cache-control": "no-store" } });
 }
 
 // Issue (or refresh) a readiness credential for a completed course. The
@@ -57,5 +60,5 @@ export async function POST(request: Request) {
     breakdown,
   });
   await store.recordAudit({ organisationId, actor: principal.displayName, role: principal.role, eventType: "credential.issued", entityType: "credential", entityId: courseId, detail: `readiness=${readiness}` });
-  return Response.json({ credential }, { status: 201, headers: { "cache-control": "no-store" } });
+  return Response.json({ credential: await decorateCredential(credential, getSessionSecret(env as unknown as RuntimeEnv)) }, { status: 201, headers: { "cache-control": "no-store" } });
 }
