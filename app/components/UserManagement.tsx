@@ -25,7 +25,15 @@ export function UserManagement() {
     setRoles(data.roles ?? []);
   }
 
-  useEffect(() => { reload("").catch(() => {}); }, []);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/users").then((response) => (response.ok ? response.json() : null)).then((data) => {
+      if (!active || !data) return;
+      setUsers(data.users ?? []);
+      setRoles(data.roles ?? []);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   async function createUser(event: React.FormEvent) {
     event.preventDefault();

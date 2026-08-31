@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { buildSessionCookie, createSession, getSessionSecret, hashPassword } from "../../../lib/auth.mjs";
 import { domainAllowed } from "../../../lib/provisioning.mjs";
-import { ensureBootstrap, getStore } from "../../../lib/store.mjs";
+import { ensureBootstrap } from "../../../lib/store.mjs";
 import { isValidEmail, normaliseEmail, passwordPolicyError, publicUser } from "../../../lib/users.mjs";
 
 type RuntimeEnv = Record<string, unknown>;

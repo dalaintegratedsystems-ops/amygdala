@@ -44,7 +44,24 @@ export function TeamsPanel({ mode = "teams" }: { mode?: "teams" | "manager" }) {
     if (managerRes.ok) setSnapshot(await managerRes.json() as Snapshot);
   }
 
-  useEffect(() => { reload().catch(() => {}); }, []);
+  useEffect(() => {
+    let active = true;
+    Promise.all([fetch("/api/cohorts"), fetch("/api/assignments"), fetch("/api/manager")]).then(async ([cohortRes, assignRes, managerRes]) => {
+      if (!active) return;
+      if (cohortRes.ok) {
+        const data = await cohortRes.json() as { cohorts: Cohort[]; users: UserRow[] };
+        setCohorts(data.cohorts ?? []);
+        setUsers(data.users ?? []);
+      }
+      if (assignRes.ok) {
+        const data = await assignRes.json() as { assignments: Assignment[]; courses: Course[] };
+        setAssignments(data.assignments ?? []);
+        setCourses(data.courses ?? []);
+      }
+      if (managerRes.ok) setSnapshot(await managerRes.json() as Snapshot);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   async function createCohort(event: React.FormEvent) {
     event.preventDefault();
@@ -79,7 +96,7 @@ export function TeamsPanel({ mode = "teams" }: { mode?: "teams" | "manager" }) {
       <div className="page-content">
         <div className="page-heading">
           <div><span className="eyebrow">Manager</span><h1>Cohort readiness</h1><p>Completion, at-risk learners and required-training gaps for this workspace.</p></div>
-          <a className="button button-secondary" href="/api/manager/export">Export CSV</a>
+          <button type="button" className="button button-secondary" onClick={() => { window.location.assign("/api/manager/export"); }}>Export CSV</button>
         </div>
         <div className="metric-grid">
           <article className="metric-card"><span className="metric-label">Avg readiness</span><strong>{counts?.avgReadiness ?? 0}%</strong></article>
