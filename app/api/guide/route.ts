@@ -67,5 +67,5 @@ export async function POST(request: Request) {
   });
 
   console.log(JSON.stringify({ event: "ai_response", organisationId: principal.organisationId, role, module: currentModule, status: result.status, retrieval: retrievalEngine, sourceIds: result.citations.map((item: { sourceId: string }) => item.sourceId), reason: result.reason, timestamp: new Date().toISOString() }));
-  return Response.json(result, { headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+  return Response.json({ ...result, retrieval: retrievalEngine }, { headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }
