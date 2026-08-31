@@ -208,14 +208,32 @@ const learnerNavigation: Array<[string, string, string]> = [
 
 // ---- marketing shell (kept as-is; honest promo) ----------------------
 
+const LANDING_SECTIONS = [
+  ["how-it-works", "How it works"],
+  ["trust", "AI trust"],
+  ["readiness", "Readiness"],
+] as const;
+
+function goToLandingSection(id: string, path: string, setPath: (path: string) => void) {
+  if (typeof window === "undefined") return;
+  const hash = `#${id}`;
+  if (path === "/" || path.startsWith("/#")) {
+    window.history.replaceState({}, "", `/${hash}`);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    return;
+  }
+  window.history.pushState({}, "", `/${hash}`);
+  setPath("/");
+}
+
 function MarketingHeader({ path, setPath }: { path: string; setPath: (path: string) => void }) {
   return (
     <header className="marketing-header">
       <button className="plain-button" onClick={() => navigate("/", setPath)}><Brand /></button>
       <nav aria-label="Main navigation">
-        <a href="#how-it-works">How it works</a>
-        <a href="#trust">AI trust</a>
-        <a href="#readiness">Readiness</a>
+        {LANDING_SECTIONS.map(([id, label]) => (
+          <a key={id} href={`/#${id}`} onClick={(event) => { event.preventDefault(); goToLandingSection(id, path, setPath); }}>{label}</a>
+        ))}
       </nav>
       <button className="button button-small button-ghost" onClick={() => navigate(path === "/demo" ? "/" : "/demo", setPath)}>
         {path === "/demo" ? "Back to overview" : "Enter demo"}
@@ -250,6 +268,12 @@ function UniverseVisual({ twoD = false }: { twoD?: boolean }) {
 }
 
 function Landing({ path, setPath }: { path: string; setPath: (path: string) => void }) {
+  useEffect(() => {
+    const id = typeof window !== "undefined" ? window.location.hash.replace(/^#/, "") : "";
+    if (!id) return;
+    const timer = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }), 80);
+    return () => window.clearTimeout(timer);
+  }, [path]);
   return (
     <div className="marketing-shell">
       <MarketingHeader path={path} setPath={setPath} />
@@ -350,7 +374,7 @@ function Sidebar({ mode, path, setPath, session, mobileOpen, closeMobile }: { mo
 
 function AppHeader({ mode, onMenu, onSwitch }: { mode: "admin" | "learner"; onMenu: () => void; onSwitch: () => void }) {
   return (
-    <header className="app-header"><button className="menu-button" onClick={onMenu} aria-label="Open navigation">☰</button><div><span className="breadcrumb">Amygdala <b>/</b> {mode === "admin" ? "Vendor workspace" : "Learning workspace"}</span></div><div className="header-actions"><button className="search-button" aria-label="Search"><span>⌕</span><em>Search</em><kbd>⌘ K</kbd></button><button className="button button-small button-ghost" onClick={onSwitch}>{mode === "admin" ? "Preview learner" : "Back to admin"}</button></div></header>
+    <header className="app-header"><button className="menu-button" onClick={onMenu} aria-label="Open navigation">☰</button><div><span className="breadcrumb">Amygdala <b>/</b> {mode === "admin" ? "Vendor workspace" : "Learning workspace"}</span></div><div className="header-actions"><button className="button button-small button-ghost" onClick={onSwitch}>{mode === "admin" ? "Preview learner" : "Back to admin"}</button></div></header>
   );
 }
 
@@ -671,7 +695,7 @@ function AdminApp({ path, setPath, session }: { path: string; setPath: (path: st
   else if (path === "/admin/teams") content = <TeamsPanel mode="teams" />;
   else if (path === "/admin/manager") content = <TeamsPanel mode="manager" />;
   else if (path === "/admin/access") content = <AccessAudit />;
-  else content = <CommandCentre session={session} setPath={setPath} />;
+  else content = <div className="page-content"><EmptyState icon="?" title="Page not found">This admin page does not exist. Choose a destination from the sidebar.</EmptyState></div>;
   return <Shell mode="admin" path={path} setPath={setPath} session={session}>{content}</Shell>;
 }
 

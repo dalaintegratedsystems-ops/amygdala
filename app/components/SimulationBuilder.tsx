@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { isAcceptableTarget, normaliseOrigin, simulationSandboxTokens } from "../lib/simbuilder.mjs";
+import { isAcceptableTarget, normaliseOrigin, publishBlockedReason, simulationSandboxTokens } from "../lib/simbuilder.mjs";
 import type { SimulationDefinition, SimulationScreen, SimulationStep, SimOrigin } from "./types";
 
 // Vendor SaaS simulation builder (admin). "Connect your product": paste a
@@ -119,6 +119,10 @@ export function SimulationBuilder() {
   function removeScreen(index: number) { setDraft((current) => ({ ...current, screens: current.screens.filter((_, i) => i !== index) })); }
 
   async function save(publish?: boolean) {
+    if (publish) {
+      const blocked = publishBlockedReason(draft);
+      if (blocked) { setError(blocked); return; }
+    }
     setSaving(true); setStatus(""); setError("");
     const payload = { ...draft, status: publish ? "Published" : draft.status };
     try {
@@ -157,6 +161,7 @@ export function SimulationBuilder() {
   }
 
   const targetOk = draft.mode !== "iframe" || isAcceptableTarget(draft.targetUrl).ok;
+  const publishBlock = publishBlockedReason(draft);
   const previewOrigin = normaliseOrigin(draft.targetUrl);
   const originAllowed = previewOrigin ? origins.some((entry) => entry.origin === previewOrigin) : false;
   const canPreviewIframe = draft.mode === "iframe" && draft.embeddable && targetOk;
@@ -306,9 +311,10 @@ export function SimulationBuilder() {
 
           {status && <p className="approved-note">{status}</p>}
           {error && <p className="signin-error" role="alert">{error}</p>}
+          {publishBlock && !error && <p className="model-note" role="status">{publishBlock}</p>}
           <div className="sim-editor-actions">
             <button type="button" className="button button-secondary" onClick={() => save(false)} disabled={saving}>{saving ? "Saving…" : "Save draft"}</button>
-            <button type="button" className="button button-primary" onClick={() => save(true)} disabled={saving}>{draft.status === "Published" ? "Save & keep published" : "Publish to learners"} →</button>
+            <button type="button" className="button button-primary" onClick={() => save(true)} disabled={saving || Boolean(publishBlock)}>{draft.status === "Published" ? "Save & keep published" : "Publish to learners"} →</button>
             {selectedId && <button type="button" className="text-button sim-delete" onClick={remove} disabled={saving}>Delete</button>}
           </div>
         </section>

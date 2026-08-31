@@ -159,6 +159,23 @@ export function normaliseSimulationDefinition(input = {}) {
   };
 }
 
+// Client-side publish gate. Mirrors the server 400s so the UI can disable
+// Publish (screenshot with no screens, iframe with no acceptable URL).
+export function publishBlockedReason(definition = {}) {
+  const title = typeof definition.title === "string" ? definition.title.trim() : "";
+  if (!title) return "Add a title before publishing.";
+  const mode = definition.mode === "screenshot" ? "screenshot" : "iframe";
+  if (mode === "screenshot") {
+    const screens = Array.isArray(definition.screens) ? definition.screens : [];
+    const uploaded = screens.some((screen) => (typeof screen?.key === "string" && screen.key) || (typeof screen?.url === "string" && screen.url));
+    if (!uploaded) return "Upload at least one screen before publishing a screenshot walkthrough.";
+    return "";
+  }
+  const target = isAcceptableTarget(definition.targetUrl);
+  if (!target.ok) return "Set a valid https sandbox URL before publishing an embed.";
+  return "";
+}
+
 function normaliseHotspot(hotspot) {
   if (!hotspot || typeof hotspot !== "object") return null;
   const clamp = (value) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));

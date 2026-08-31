@@ -132,6 +132,12 @@ function createD1Store(db) {
       return this.getSource(organisationId, id);
     },
 
+    async deleteSource(organisationId, id) {
+      await db.delete(schema.sources).where(and(eq(schema.sources.organisationId, organisationId), eq(schema.sources.id, id)));
+      try { await db.delete(schema.knowledgeChunks).where(and(eq(schema.knowledgeChunks.organisationId, organisationId), eq(schema.knowledgeChunks.sourceId, id))); } catch { /* tolerate */ }
+      return { ok: true };
+    },
+
     // ---- knowledge chunks (semantic retrieval; tolerant of pre-migration) --
 
     async replaceKnowledgeChunks(organisationId, sourceId, chunks) {
@@ -228,6 +234,12 @@ function createD1Store(db) {
       if (patch.course !== undefined) update.courseJson = JSON.stringify(patch.course);
       await db.update(schema.courses).set(update).where(and(eq(schema.courses.organisationId, organisationId), eq(schema.courses.id, id)));
       return this.getCourse(organisationId, id);
+    },
+
+    async deleteCourse(organisationId, id) {
+      await db.delete(schema.courses).where(and(eq(schema.courses.organisationId, organisationId), eq(schema.courses.id, id)));
+      try { await db.delete(schema.assignments).where(and(eq(schema.assignments.organisationId, organisationId), eq(schema.assignments.courseId, id))); } catch { /* tolerate */ }
+      return { ok: true };
     },
 
     async recordAudit(event) {

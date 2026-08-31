@@ -430,6 +430,13 @@ export function createMemoryStore() {
       return { ...updated };
     },
 
+    async deleteSource(organisationId, id) {
+      const source = data.sources.get(id);
+      if (source && source.organisationId === organisationId) data.sources.delete(id);
+      data.knowledgeChunks.delete(`${organisationId}:${id}`);
+      return { ok: true };
+    },
+
     // ---- knowledge chunks (semantic retrieval) -----------------------
 
     async replaceKnowledgeChunks(organisationId, sourceId, chunks) {
@@ -487,6 +494,13 @@ export function createMemoryStore() {
       }
       data.courses.set(id, updated);
       return { ...updated };
+    },
+
+    async deleteCourse(organisationId, id) {
+      const course = data.courses.get(id);
+      if (course && course.organisationId === organisationId) data.courses.delete(id);
+      data.assignments = data.assignments.filter((assignment) => !(assignment.organisationId === organisationId && assignment.courseId === id));
+      return { ok: true };
     },
 
     async recordAudit(event) {

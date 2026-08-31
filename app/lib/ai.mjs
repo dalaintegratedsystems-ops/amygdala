@@ -14,7 +14,9 @@
 //  - The OpenAI key is read from `env.OPENAI_API_KEY` and is NEVER logged.
 
 import {
+  MIN_MATCH_SCORE,
   SAFE_FALLBACK,
+  VERIFIED_SCORE,
   answerGroundedQuestion,
   isPromptInjection,
   searchApprovedKnowledge,
@@ -205,7 +207,8 @@ export function reconcileCitations(modelSourceIds, retrievedSources) {
 const GUIDE_INSTRUCTIONS = `You are NexusFlow's product training assistant. Answer ONLY using the approved source material provided in the request. Never use outside knowledge and never invent steps, features or facts.
 
 Rules:
-- If the approved material does not clearly answer the question, set "covered" to false.
+- If the approved material does not answer the question, set "covered" to false.
+- Close paraphrases of an approved procedure ARE covered (e.g. "create" vs "new"/"select", "activate" vs "enable"). Do not refuse those.
 - In "guide" mode, produce a concise numbered, step-by-step procedure taken strictly from the approved steps.
 - In "explain" mode, produce a short conceptual explanation grounded in the approved material.
 - Cite the source ids you actually used in "citedSourceIds".
@@ -227,7 +230,9 @@ export async function answerGroundedQuestionAI(env, sources, params) {
   }
   const matches = searchApprovedKnowledge(sources, { query, role, module });
   const best = matches[0];
-  if (!best || best.score < 2) {
+  if (!best || best.score < MIN_MATCH_SCORE) {
+    // Below the evidence floor — refuse via the deterministic path (injection
+    // and OOS never reach the model).
     return answerGroundedQuestion(sources, params);
   }
 
@@ -261,15 +266,16 @@ export async function answerGroundedQuestionAI(env, sources, params) {
     const parsed = await callLLMForJson(env, { instructions: GUIDE_INSTRUCTIONS, input });
     const answer = typeof parsed.answer === "string" ? parsed.answer.trim() : "";
     if (parsed.covered !== true || answer.length === 0) {
-      // Model judged the approved material insufficient -> mandated refusal.
-      return { status: "Not covered", answer: SAFE_FALLBACK, citations: [], escalationRecommended: true, reason: "insufficient-evidence" };
+      // Model was phrasing-strict; the keyword/semantic match already cleared
+      // the evidence floor, so serve the grounded deterministic procedure.
+      return answerGroundedQuestion(sources, params);
     }
 
     const citations = reconcileCitations(parsed.citedSourceIds, retrievedSources);
     if (citations.length === 0) {
       return answerGroundedQuestion(sources, params);
     }
-    const status = best.score >= 4 ? "Verified" : "Limited guidance";
+    const status = best.score >= VERIFIED_SCORE ? "Verified" : "Limited guidance";
     return {
       status,
       answer,

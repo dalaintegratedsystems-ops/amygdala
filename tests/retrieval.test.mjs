@@ -6,6 +6,7 @@ import {
   keywordScore,
   rankByEmbedding,
   rankByKeyword,
+  rankHybrid,
   retrieveRelevant,
 } from "../app/lib/retrieval.mjs";
 import { embedTexts, NO_KEY } from "../app/lib/ai.mjs";
@@ -43,6 +44,16 @@ test("keywordScore and rankByKeyword rank by query-term overlap", () => {
   ];
   const ranked = rankByKeyword(chunks, "language policy governing", 1);
   assert.equal(ranked[0].section, "2");
+});
+
+test("rankHybrid blends keyword overlap with cosine so paraphrases still rank", () => {
+  const chunks = [
+    { section: "A", content: "Select New automation and review the summary.", embedding: [0, 1, 0] },
+    { section: "B", content: "Unrelated billing settings.", embedding: [1, 0, 0] },
+  ];
+  const ranked = rankHybrid(chunks, "create a new automation", [0.2, 0.8, 0], 1);
+  assert.equal(ranked[0].section, "A");
+  assert.ok(ranked[0].score > 0);
 });
 
 test("retrieveRelevant falls back to keyword ranking without a key", async () => {

@@ -60,13 +60,28 @@ export function rankByEmbedding(chunks, queryVector, k = 4) {
 
 // Deterministic keyword ranking fallback.
 export function rankByKeyword(chunks, query, k = 4) {
-  const scored = (Array.isArray(chunks) ? chunks : [])
-    .map((chunk) => ({ chunk, score: keywordScore(query, `${chunk.section ?? ""} ${chunk.content ?? ""}`) }))
+  return rankHybrid(chunks, query, null, k);
+}
+
+// Blend cosine (when a query vector is present) with keyword overlap so a
+// near-paraphrase still surfaces the approved passage. Keyword-only when
+// embeddings are missing. Floor is intentionally low (> 0) so we never drop
+// a weakly similar but still on-topic chunk; callers still ground on text.
+export function rankHybrid(chunks, query, queryVector = null, k = 4) {
+  const list = Array.isArray(chunks) ? chunks : [];
+  const hasQueryVector = Array.isArray(queryVector) && queryVector.length > 0;
+  const scored = list
+    .map((chunk) => {
+      const keyword = keywordScore(query, `${chunk.section ?? ""} ${chunk.content ?? ""}`);
+      const usable = hasQueryVector && Array.isArray(chunk?.embedding) && chunk.embedding.length;
+      const semantic = usable ? cosineSimilarity(chunk.embedding, queryVector) : 0;
+      const score = usable ? 0.55 * semantic + 0.45 * keyword : keyword;
+      return { chunk, score };
+    })
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, Math.max(1, k));
-  // If nothing overlaps, return the first chunks so the caller still has grounded context.
-  const chosen = scored.length ? scored : (Array.isArray(chunks) ? chunks : []).slice(0, Math.max(1, k)).map((chunk) => ({ chunk, score: 0 }));
+  const chosen = scored.length ? scored : list.slice(0, Math.max(1, k)).map((chunk) => ({ chunk, score: 0 }));
   return chosen.map(({ chunk, score }) => ({ section: chunk.section ?? "", content: chunk.content ?? "", score: Number(score.toFixed(4)) }));
 }
 
@@ -93,7 +108,7 @@ export async function retrieveRelevant(env, source, query, { k = 4 } = {}) {
     try {
       const [queryVector] = await embedTexts(env, [query]);
       if (Array.isArray(queryVector) && queryVector.length) {
-        const passages = rankByEmbedding(chunks, queryVector, k);
+        const passages = rankHybrid(chunks, query, queryVector, k);
         if (passages.length) return { engine: "semantic", passages };
       }
     } catch (error) {
@@ -102,7 +117,7 @@ export async function retrieveRelevant(env, source, query, { k = 4 } = {}) {
       }
     }
   }
-  return { engine: "keyword", passages: rankByKeyword(chunks, query, k) };
+  return { engine: "keyword", passages: rankHybrid(chunks, query, null, k) };
 }
 
 // Prepare chunks for persistence: attach token counts and (optionally) freshly

@@ -101,7 +101,7 @@ export default function PromoIntro({ onComplete, showSkip = false }: { onComplet
           <div className="promo-orbit promo-orbit-2"><i>Practise</i></div>
           <div className="promo-orbit promo-orbit-3"><i>Validate</i></div>
         </div>
-        <div className="promo-badges"><span>SSO &amp; SCIM</span><span>Tenant isolation</span><span>Grounded AI</span><span>Verifiable credentials</span><span>3D / VR</span></div>
+        <div className="promo-badges"><span>SSO &amp; SCIM</span><span>Tenant isolation</span><span>Grounded AI</span><span>Verifiable credentials</span></div>
       </section>
 
       <section className={`promo-scene promo-reveal ${scene === 6 ? "active" : ""}`}>

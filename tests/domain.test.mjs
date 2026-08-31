@@ -28,6 +28,19 @@ test("grounded answers map a visible citation", () => {
   assert.match(result.answer, /Open Projects/);
 });
 
+test("a paraphrase of an approved procedure is Verified with a citation", () => {
+  const result = answerGroundedQuestion(sources, { query: "How do I create a new automation?", mode: "guide" });
+  assert.equal(result.status, "Verified");
+  assert.equal(result.citations[0].sourceId, "src-workflows");
+  assert.match(result.answer, /Activate/i);
+});
+
+test("genuinely out-of-scope questions stay refused", () => {
+  const weather = answerGroundedQuestion(sources, { query: "What is the capital of France and the weather in Tokyo today?" });
+  assert.equal(weather.status, "Not covered");
+  assert.equal(weather.citations.length, 0);
+});
+
 test("unsupported questions use the mandated refusal", () => {
   const result = answerGroundedQuestion(sources, { query: "Does NexusFlow include payroll processing?" });
   assert.equal(result.status, "Not covered");

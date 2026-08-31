@@ -6,6 +6,7 @@ import {
   isOriginAllowed,
   normaliseOrigin,
   normaliseSimulationDefinition,
+  publishBlockedReason,
   scoreSimulationRun,
   simulationSandboxTokens,
 } from "../app/lib/simbuilder.mjs";
@@ -78,6 +79,13 @@ test("normaliseSimulationDefinition requires a URL for iframe and screens for sc
   const screenshot = normaliseSimulationDefinition({ title: "x", mode: "screenshot", screens: [{ key: "media/o/1.png", alt: "Home" }] });
   assert.equal(screenshot.ok, true);
   assert.equal(screenshot.simulation.screens.length, 1);
+});
+
+test("publishBlockedReason gates screenshot publish until a screen is present", () => {
+  assert.match(publishBlockedReason({ title: "Walkthrough", mode: "screenshot", screens: [] }), /screen/i);
+  assert.equal(publishBlockedReason({ title: "Walkthrough", mode: "screenshot", screens: [{ key: "media/o/1.png" }] }), "");
+  assert.match(publishBlockedReason({ title: "Embed", mode: "iframe", targetUrl: "" }), /url/i);
+  assert.equal(publishBlockedReason({ title: "Embed", mode: "iframe", targetUrl: "https://sandbox.example.com/app" }), "");
 });
 
 test("scoreSimulationRun penalises errors but floors at 60", () => {

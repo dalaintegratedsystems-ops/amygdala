@@ -36,7 +36,60 @@ export function isPromptInjection(query) {
 }
 
 function tokenise(query) {
-  return [...new Set(query.toLowerCase().match(/[a-z0-9]+/g) ?? [])].filter((token) => token.length > 2);
+  return [...new Set(query.toLowerCase().match(/[a-z0-9]+/g) ?? [])]
+    .filter((token) => token.length > 2 && !STOPWORDS.has(token));
+}
+
+const STOPWORDS = new Set([
+  "the", "and", "for", "how", "what", "does", "did", "can", "you", "today",
+  "from", "with", "that", "this", "are", "was", "not", "any", "our", "your",
+  "about", "into", "just", "have", "has", "had", "will", "than", "then",
+  "when", "where", "which", "who", "why", "its", "their", "them",
+]);
+
+// Close paraphrases of procedure verbs (create ≈ new/add). Used only when the
+// original query token itself does not hit, so OOS questions stay at score 0.
+const RELATED_TOKENS = {
+  create: ["new", "add"],
+  creating: ["new", "create", "add"],
+  make: ["create", "new"],
+  adding: ["add", "new", "create"],
+  activate: ["enable", "start"],
+  activating: ["activate", "enable"],
+  enable: ["activate"],
+  enabling: ["activate", "enable"],
+};
+
+export const MIN_MATCH_SCORE = 2;
+export const VERIFIED_SCORE = 4;
+
+function tokenHit(token, keywords, haystack) {
+  if ((keywords ?? []).some((keyword) => keyword.includes(token) || token.includes(keyword))) return 2;
+  if (haystack.includes(token)) return 1;
+  return 0;
+}
+
+function sourceHaystack(source) {
+  return [
+    source.title,
+    source.section,
+    source.extractedText,
+    ...(Array.isArray(source.procedure) ? source.procedure : []),
+  ].join(" ").toLowerCase();
+}
+
+function sourceScore(source, queryTokens) {
+  const keywords = (source.keywords ?? []).map((keyword) => String(keyword).toLowerCase());
+  const haystack = sourceHaystack(source);
+  return queryTokens.reduce((score, token) => {
+    const direct = tokenHit(token, keywords, haystack);
+    if (direct) return score + direct;
+    for (const related of RELATED_TOKENS[token] ?? []) {
+      const hit = tokenHit(related, keywords, haystack);
+      if (hit) return score + 1;
+    }
+    return score;
+  }, 0);
 }
 
 // Score a supplied list of approved sources against a query. Callers pass the
@@ -52,13 +105,7 @@ export function searchApprovedKnowledge(sources, { query, role = "Project Manage
       (source.intendedRole === "All roles" || source.intendedRole === role || role === "Workspace Administrator") &&
       (!module || source.module === module || (source.keywords ?? []).some((keyword) => module.toLowerCase().includes(keyword)))
     )
-    .map((source) => ({
-      source,
-      score: queryTokens.reduce(
-        (score, token) => score + ((source.keywords ?? []).some((keyword) => keyword.includes(token) || token.includes(keyword)) ? 2 : source.extractedText.toLowerCase().includes(token) ? 1 : 0),
-        0,
-      ),
-    }))
+    .map((source) => ({ source, score: sourceScore(source, queryTokens) }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score);
 }
@@ -73,11 +120,11 @@ export function answerGroundedQuestion(sources, { query, mode = "explain", role 
 
   const matches = searchApprovedKnowledge(sources, { query, role, module });
   const best = matches[0];
-  if (!best || best.score < 2) {
+  if (!best || best.score < MIN_MATCH_SCORE) {
     return { status: "Not covered", answer: SAFE_FALLBACK, citations: [], escalationRecommended: true, reason: "insufficient-evidence" };
   }
 
-  const status = best.score >= 4 ? "Verified" : "Limited guidance";
+  const status = best.score >= VERIFIED_SCORE ? "Verified" : "Limited guidance";
   const answer = mode === "guide"
     ? `${best.source.procedure.map((step, index) => `${index + 1}. ${step}`).join("\n")}\n\nFollow the approved sequence above and pause if your workspace does not match it.`
     : best.source.explanation;

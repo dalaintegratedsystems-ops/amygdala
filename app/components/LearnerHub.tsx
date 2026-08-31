@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type Assignment = { id: string; courseId: string; courseTitle: string; status: string; readiness: number; required: boolean; dueDate: string | null; overdue: boolean };
+type Assignment = { id: string; courseId: string; courseTitle: string; status: string; readiness: number; required: boolean; dueDate: string | null; overdue: boolean; courseUnavailable?: boolean };
 type Credential = { courseId: string; programme: string; readiness: number; issuedAt: string; expiresAt: string; status: string; verify: string };
 type Notification = { id: string; title: string; body: string; readAt: string | null; createdAt: string };
 
@@ -23,11 +23,11 @@ export function MyAssignments({ onOpenCourse }: { onOpenCourse: (courseId: strin
           <tbody>
             {items.map((item) => (
               <tr key={item.id}>
-                <td><strong>{item.courseTitle}</strong>{item.required ? " · required" : " · optional"}</td>
+                <td><strong>{item.courseTitle}</strong>{item.courseUnavailable ? " · unavailable" : item.required ? " · required" : " · optional"}</td>
                 <td><span className={`status-pill ${item.status}`}>{item.status}</span></td>
                 <td>{item.readiness}%</td>
                 <td>{item.dueDate ? item.dueDate.slice(0, 10) : "—"}{item.overdue ? " · overdue" : ""}</td>
-                <td><button type="button" className="text-button" onClick={() => onOpenCourse(item.courseId)}>Open →</button></td>
+                <td>{item.courseUnavailable ? <span className="model-note">Course unavailable</span> : <button type="button" className="text-button" onClick={() => onOpenCourse(item.courseId)}>Open →</button>}</td>
               </tr>
             ))}
           </tbody>

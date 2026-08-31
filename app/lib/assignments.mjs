@@ -46,16 +46,28 @@ export function assignmentsForUser(user, assignments, { cohortIds = [] } = {}) {
   return (assignments ?? []).filter((assignment) => assignmentAppliesToUser(assignment, { user, cohortIds }));
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const MISSING_COURSE_TITLE = "Course unavailable";
+
+export function assignmentCourseTitle(course, fallbackId) {
+  const title = typeof course?.title === "string" ? course.title.trim() : "";
+  if (title && !UUID_RE.test(title)) return title;
+  if (fallbackId && !UUID_RE.test(String(fallbackId))) return String(fallbackId);
+  return MISSING_COURSE_TITLE;
+}
+
 /**
  * @param {Record<string, any>} assignment
  * @param {{ course?: { title?: string }, progress?: Record<string, any>, now?: number }} [options]
  */
 export function decorateAssignment(assignment, { course, progress, now = Date.now() } = {}) {
   const derived = assignmentStatus(assignment, progress, now);
+  const courseTitle = assignmentCourseTitle(course, assignment?.courseId);
   return {
     ...assignment,
     required: Number(assignment.required) !== 0,
-    courseTitle: course?.title ?? assignment.courseId,
+    courseTitle,
+    courseUnavailable: courseTitle === MISSING_COURSE_TITLE,
     ...derived,
   };
 }
@@ -87,7 +99,7 @@ export function managerSnapshot({ users = [], assignments = [], progress = [], c
         displayName: user.displayName,
         role: user.role,
         courseId: assignment.courseId,
-        courseTitle: courseById.get(assignment.courseId)?.title ?? assignment.courseId,
+        courseTitle: assignmentCourseTitle(courseById.get(assignment.courseId), assignment.courseId),
         required: Number(assignment.required) !== 0,
         dueDate: assignment.dueDate ?? null,
         ...derived,

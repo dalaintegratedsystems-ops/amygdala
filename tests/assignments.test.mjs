@@ -61,6 +61,15 @@ test("store-backed auto-enrol + assignment status end-to-end", async () => {
   assert.equal(decorated.courseTitle, "Onboarding");
 });
 
+test("missing or UUID-only course titles become Course unavailable", () => {
+  const raw = decorateAssignment({ id: "a1", courseId: "d6a3047a-e0e4-4e88-834b-127769c9d55e", required: 1 }, { course: undefined });
+  assert.equal(raw.courseTitle, "Course unavailable");
+  assert.equal(raw.courseUnavailable, true);
+  const titled = decorateAssignment({ id: "a2", courseId: "c-1", required: 1 }, { course: { title: "Safety" } });
+  assert.equal(titled.courseTitle, "Safety");
+  assert.equal(titled.courseUnavailable, false);
+});
+
 test("manager snapshot flags at-risk and gap rows without leaking other roles", () => {
   const snapshot = managerSnapshot({
     users: [
