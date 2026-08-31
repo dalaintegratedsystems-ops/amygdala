@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { newBlock } from "./LessonBlockEditor";
+import { buildNarrationScript } from "../lib/simulation.mjs";
 import type { Citation, LessonBlock, StoredSource } from "./types";
 
 // Direct document extraction: select a passage in the source viewer, then
@@ -39,6 +40,14 @@ export function SourceExtractor({ source, citation, onInsert }: { source: Stored
     setNote("Inserted as a procedure diagram.");
   }
 
+  function insertNarration() {
+    if (!selection) { setNote("Select a passage first."); return; }
+    const steps = selection.split(/\n|(?<=[.;])\s+/).map((line) => line.replace(/^\s*(?:\d+[.)]|[-*•])\s*/, "").trim()).filter((line) => line.length > 3).slice(0, 12);
+    const script = buildNarrationScript(steps.length ? steps : [selection], { title: source.section || source.title, summary: selection });
+    onInsert(newBlock("callout", citation, { tone: "info", text: script }));
+    setNote("Inserted a grounded narration script (read-aloud) as a callout.");
+  }
+
   async function insertQuiz() {
     if (!selection) { setNote("Select a passage first."); return; }
     setBusy(true); setNote("");
@@ -68,6 +77,7 @@ export function SourceExtractor({ source, citation, onInsert }: { source: Stored
           <button type="button" className="button button-secondary button-small" onClick={() => insertText()} disabled={!selection}>Insert as text</button>
           <button type="button" className="button button-secondary button-small" onClick={() => insertText("info")} disabled={!selection}>As callout</button>
           <button type="button" className="button button-secondary button-small" onClick={insertDiagram} disabled={!selection}>As diagram</button>
+          <button type="button" className="button button-secondary button-small" onClick={insertNarration} disabled={!selection}>As narration</button>
           <button type="button" className="button button-secondary button-small" onClick={insertQuiz} disabled={!selection || busy}>{busy ? "Building…" : "As quiz"}</button>
         </div>
       </div>

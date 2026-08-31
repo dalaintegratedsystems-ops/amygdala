@@ -14,6 +14,7 @@ import {
   createMemoryStore,
   knowledgeJsonFor,
   now,
+  parseArray,
   parseObject,
   progressKey,
   rowToSimulation,
@@ -106,16 +107,63 @@ function createD1Store(db) {
       }
       if (patch.procedure !== undefined) update.procedureJson = JSON.stringify(patch.procedure);
       if (patch.keywords !== undefined) update.keywordsJson = JSON.stringify(patch.keywords);
-      if (patch.documentType !== undefined || patch.outline !== undefined || patch.coverage !== undefined) {
+      if (patch.documentType !== undefined || patch.outline !== undefined || patch.coverage !== undefined || patch.types !== undefined) {
         const current = await this.getSource(organisationId, id);
         update.knowledgeJson = knowledgeJsonFor({
           documentType: patch.documentType ?? current?.documentType ?? null,
           outline: patch.outline ?? current?.outline ?? [],
           coverage: patch.coverage ?? current?.coverage ?? null,
+          types: patch.types ?? current?.types ?? null,
         });
       }
       await db.update(schema.sources).set(update).where(and(eq(schema.sources.organisationId, organisationId), eq(schema.sources.id, id)));
       return this.getSource(organisationId, id);
+    },
+
+    // ---- knowledge chunks (semantic retrieval; tolerant of pre-migration) --
+
+    async replaceKnowledgeChunks(organisationId, sourceId, chunks) {
+      const timestamp = now();
+      const rows = (Array.isArray(chunks) ? chunks : []).map((chunk, index) => ({
+        id: crypto.randomUUID(),
+        organisationId,
+        sourceId,
+        chunkIndex: index,
+        section: chunk.section ?? "",
+        content: chunk.content ?? "",
+        tokenCount: chunk.tokenCount ?? 0,
+        embeddingJson: Array.isArray(chunk.embedding) ? JSON.stringify(chunk.embedding) : "",
+        createdAt: timestamp,
+      }));
+      try {
+        await db.delete(schema.knowledgeChunks).where(and(eq(schema.knowledgeChunks.organisationId, organisationId), eq(schema.knowledgeChunks.sourceId, sourceId)));
+        // D1 caps bound variables per statement; insert in modest batches.
+        for (let start = 0; start < rows.length; start += 20) {
+          const batch = rows.slice(start, start + 20);
+          if (batch.length) await db.insert(schema.knowledgeChunks).values(batch);
+        }
+        return rows.length;
+      } catch {
+        // Table not yet migrated — semantic retrieval degrades to keyword.
+        return 0;
+      }
+    },
+
+    async listKnowledgeChunks(organisationId, sourceId) {
+      try {
+        const rows = await db.select().from(schema.knowledgeChunks)
+          .where(and(eq(schema.knowledgeChunks.organisationId, organisationId), eq(schema.knowledgeChunks.sourceId, sourceId)))
+          .orderBy(schema.knowledgeChunks.chunkIndex);
+        return rows.map((row) => ({
+          chunkIndex: row.chunkIndex,
+          section: row.section,
+          content: row.content,
+          tokenCount: row.tokenCount,
+          embedding: row.embeddingJson ? parseArray(row.embeddingJson) : null,
+        }));
+      } catch {
+        return [];
+      }
     },
 
     async createCourse(course) {

@@ -122,6 +122,25 @@ export function scoreScenarioAttempt({ steps, errors }) {
   return Math.max(60, 100 - penalty);
 }
 
+// A short spoken-narration script for a lesson: an intro line, one grounded
+// line per step/point, and a closing prompt. Deterministic and grounded to the
+// supplied steps so it can be inserted as a lesson block and read aloud.
+export function buildNarrationScript(input, options = {}) {
+  const steps = toSteps(input);
+  const title = options.title ?? "this lesson";
+  const lines = [];
+  lines.push(`In this lesson we cover ${title}.`);
+  if (steps.length === 0 && options.summary) {
+    lines.push(String(options.summary).replace(/\s+/g, " ").trim());
+  }
+  steps.forEach((step, index) => {
+    const clean = String(step).replace(/\s+/g, " ").trim();
+    lines.push(steps.length > 1 ? `Step ${index + 1}: ${clean}.` : `${clean}.`);
+  });
+  lines.push("Review the cited source if anything is unclear before continuing.");
+  return lines.join("\n");
+}
+
 // Accessible caption/transcript alternative for a visual procedure.
 export function buildTranscript(input, options = {}) {
   const steps = toSteps(input);

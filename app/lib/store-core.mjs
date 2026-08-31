@@ -53,6 +53,7 @@ export function rowToSource(row) {
     documentType: knowledge.documentType ?? null,
     outline: Array.isArray(knowledge.outline) ? knowledge.outline : [],
     coverage: knowledge.coverage ?? null,
+    types: knowledge.types && typeof knowledge.types === "object" ? knowledge.types : null,
   };
 }
 
@@ -63,6 +64,7 @@ export function knowledgeJsonFor(source) {
     documentType: source.documentType ?? null,
     outline: Array.isArray(source.outline) ? source.outline : [],
     coverage: source.coverage ?? null,
+    types: source.types && typeof source.types === "object" ? source.types : null,
   });
 }
 
@@ -151,6 +153,7 @@ export function createMemoryStore() {
     learnerProgress: new Map(),
     attempts: [],
     credentials: new Map(),
+    knowledgeChunks: new Map(),
   };
 
   return {
@@ -214,11 +217,32 @@ export function createMemoryStore() {
       const source = data.sources.get(id);
       if (!source || source.organisationId !== organisationId) return null;
       const updated = { ...source };
-      for (const key of ["title", "description", "product", "module", "intendedRole", "contentOwner", "type", "version", "status", "approvalStatus", "section", "storageKey", "extractedText", "explanation", "uploadDate", "effectiveDate", "procedure", "keywords", "documentType", "outline", "coverage"]) {
+      for (const key of ["title", "description", "product", "module", "intendedRole", "contentOwner", "type", "version", "status", "approvalStatus", "section", "storageKey", "extractedText", "explanation", "uploadDate", "effectiveDate", "procedure", "keywords", "documentType", "outline", "coverage", "types"]) {
         if (patch[key] !== undefined) updated[key] = patch[key];
       }
       data.sources.set(id, updated);
       return { ...updated };
+    },
+
+    // ---- knowledge chunks (semantic retrieval) -----------------------
+
+    async replaceKnowledgeChunks(organisationId, sourceId, chunks) {
+      const records = (Array.isArray(chunks) ? chunks : []).map((chunk, index) => ({
+        organisationId,
+        sourceId,
+        chunkIndex: index,
+        section: chunk.section ?? "",
+        content: chunk.content ?? "",
+        tokenCount: chunk.tokenCount ?? 0,
+        embedding: Array.isArray(chunk.embedding) ? chunk.embedding : null,
+      }));
+      data.knowledgeChunks.set(`${organisationId}:${sourceId}`, records);
+      return records.length;
+    },
+
+    async listKnowledgeChunks(organisationId, sourceId) {
+      const records = data.knowledgeChunks.get(`${organisationId}:${sourceId}`) ?? [];
+      return records.map((chunk) => ({ ...chunk, embedding: Array.isArray(chunk.embedding) ? [...chunk.embedding] : null }));
     },
 
     async createCourse(course) {

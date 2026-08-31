@@ -59,6 +59,23 @@ export const sources = sqliteTable("sources", {
   ...timestamps,
 }, (table) => [index("idx_sources_org_status").on(table.organisationId, table.status)]);
 
+// Retrieval-sized knowledge chunks for a source, each with an optional
+// embedding vector (JSON array) used for semantic retrieval (RAG). The store
+// tolerates this table's absence pre-migration and falls back to keyword
+// retrieval / on-the-fly chunking.
+export const knowledgeChunks = sqliteTable("knowledge_chunks", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  sourceId: text("source_id").notNull(),
+  chunkIndex: integer("chunk_index").notNull().default(0),
+  section: text("section").notNull().default(""),
+  content: text("content").notNull().default(""),
+  tokenCount: integer("token_count").notNull().default(0),
+  // JSON-encoded number[] embedding, or "" when embeddings were unavailable.
+  embeddingJson: text("embedding_json").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_knowledge_chunks_source").on(table.organisationId, table.sourceId)]);
+
 // A generated course (programme + modules + lessons + assessment +
 // simulation), stored as JSON and linked back to its grounding source.
 export const courses = sqliteTable("courses", {

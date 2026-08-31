@@ -24,9 +24,12 @@ import { generateCourseFromSource } from "./authoring.mjs";
 import { citeSpans, copilotFallback, deriveEditorHints, proposeBlueprint } from "./architect.mjs";
 
 export const MODEL = "gpt-5.6-sol";
+export const EMBED_MODEL = "text-embedding-3-small";
 export const NO_KEY = "no-openai-key";
 const ENDPOINT = "https://api.openai.com/v1/responses";
+const EMBED_ENDPOINT = "https://api.openai.com/v1/embeddings";
 const DEFAULT_TIMEOUT_MS = 20000;
+const EMBED_BATCH = 96;
 
 // Concatenate the text segments of a Responses API result. Prefers the
 // convenience `output_text`, then falls back to output[].content[].text.
@@ -72,6 +75,47 @@ export async function callLLM(env, { instructions, input, timeoutMs = DEFAULT_TI
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Embed one or more texts with the OpenAI embeddings API. Returns an array of
+// vectors aligned to the input order. Throws the NO_KEY sentinel when no key is
+// present so callers fall back to keyword retrieval. Batches large inputs so a
+// whole document's chunks can be embedded in one call site.
+export async function embedTexts(env, texts, { model = EMBED_MODEL, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  const key = env?.OPENAI_API_KEY;
+  if (!key || String(key).length === 0) {
+    const error = new Error(NO_KEY);
+    error.code = NO_KEY;
+    throw error;
+  }
+  const list = (Array.isArray(texts) ? texts : [texts]).map((text) => String(text ?? "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  if (list.length === 0) return [];
+
+  const vectors = [];
+  for (let start = 0; start < list.length; start += EMBED_BATCH) {
+    const batch = list.slice(start, start + EMBED_BATCH);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(EMBED_ENDPOINT, {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+        body: JSON.stringify({ model, input: batch }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`openai-embed-http-${response.status}`);
+      const data = await response.json();
+      const rows = Array.isArray(data?.data) ? [...data.data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0)) : [];
+      if (rows.length !== batch.length) throw new Error("openai-embed-count-mismatch");
+      for (const row of rows) {
+        if (!Array.isArray(row?.embedding)) throw new Error("openai-embed-empty");
+        vectors.push(row.embedding);
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return vectors;
 }
 
 // Defensive JSON extraction: tolerates code fences and leading/trailing prose
@@ -187,15 +231,20 @@ export async function answerGroundedQuestionAI(env, sources, params) {
   try {
     const retrievedSources = matches.slice(0, 4).map((match) => match.source);
     const context = retrievedSources
-      .map((source) =>
-        [
+      .map((source) => {
+        // Prefer semantically-retrieved passages (RAG) when the route attached
+        // them; otherwise use the full approved text. Keyword remains fallback.
+        const approvedText = Array.isArray(source.retrievedPassages) && source.retrievedPassages.length
+          ? source.retrievedPassages.join("\n---\n")
+          : source.extractedText;
+        return [
           `SOURCE id=${source.id}`,
           `title: ${source.title}`,
           `section: ${source.section}`,
-          `approved_text: ${source.extractedText}`,
+          `approved_text: ${approvedText}`,
           `approved_steps: ${source.procedure.join(" | ")}`,
-        ].join("\n"),
-      )
+        ].join("\n");
+      })
       .join("\n\n");
     const input = [
       `mode: ${mode}`,
@@ -309,10 +358,14 @@ export async function generateCourseFromSourceAI(env, source, options = {}) {
   if (!deterministic.ok) return deterministic;
 
   try {
+    const relevant = Array.isArray(source.retrievedPassages) && source.retrievedPassages.length
+      ? ["most_relevant_passages (grounding):", ...source.retrievedPassages.map((passage) => `- ${passage}`)]
+      : [];
     const input = [
       `title: ${source.title}`,
       `module: ${source.module}`,
       `approved_concept: ${source.explanation}`,
+      ...relevant,
       `approved_steps:`,
       ...source.procedure.map((step, index) => `${index + 1}. ${step}`),
     ].join("\n");

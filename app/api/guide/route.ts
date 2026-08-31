@@ -1,5 +1,7 @@
 import { env } from "cloudflare:workers";
 import { answerGroundedQuestionAI } from "../../lib/ai.mjs";
+import { searchApprovedKnowledge } from "../../lib/domain.mjs";
+import { retrieveRelevant } from "../../lib/retrieval.mjs";
 import { resolveRequestIdentity } from "../../lib/auth.mjs";
 import { getStore } from "../../lib/store.mjs";
 
@@ -32,6 +34,25 @@ export async function POST(request: Request) {
 
   const store = getStore(env as unknown as Record<string, unknown>);
   const sources = await store.listApprovedSources(principal.organisationId);
+
+  // Semantic retrieval (RAG): for the top keyword-matched sources, rank their
+  // stored chunks by cosine similarity to the query (keyword fallback when no
+  // embeddings/key) and attach the most relevant passages for grounding.
+  let retrievalEngine = "keyword";
+  try {
+    const matches = (searchApprovedKnowledge as (list: unknown, params: { query: string; role: string; module?: string }) => Array<{ source: { id: string; retrievedPassages?: string[] } }>)(sources, { query, role, module: currentModule }).slice(0, 3);
+    for (const match of matches) {
+      const chunks = await store.listKnowledgeChunks(principal.organisationId, match.source.id);
+      const { engine, passages } = await retrieveRelevant(env as unknown as Record<string, unknown>, { ...match.source, knowledgeChunks: chunks }, query, { k: 3 });
+      if (passages.length) {
+        match.source.retrievedPassages = passages.map((passage: { content: string }) => passage.content);
+        if (engine === "semantic") retrievalEngine = "semantic";
+      }
+    }
+  } catch {
+    // Retrieval augmentation is best-effort; fall back to full-text grounding.
+  }
+
   const result = await answerGroundedQuestionAI(env as unknown as Record<string, unknown>, sources, { query, mode, role, module: currentModule });
 
   // Record the answer for the traceable AI activity log + gap analytics.
@@ -45,6 +66,6 @@ export async function POST(request: Request) {
     detail: JSON.stringify({ status: result.status, topic: currentModule ?? query.slice(0, 60), question: query.slice(0, 120), source: result.citations[0]?.title ?? null }),
   });
 
-  console.log(JSON.stringify({ event: "ai_response", organisationId: principal.organisationId, role, module: currentModule, status: result.status, sourceIds: result.citations.map((item: { sourceId: string }) => item.sourceId), reason: result.reason, timestamp: new Date().toISOString() }));
+  console.log(JSON.stringify({ event: "ai_response", organisationId: principal.organisationId, role, module: currentModule, status: result.status, retrieval: retrievalEngine, sourceIds: result.citations.map((item: { sourceId: string }) => item.sourceId), reason: result.reason, timestamp: new Date().toISOString() }));
   return Response.json(result, { headers: { "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }

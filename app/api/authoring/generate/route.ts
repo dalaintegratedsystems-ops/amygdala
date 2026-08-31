@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
 import { approveCourse, summariseGeneratedCourse } from "../../../lib/authoring.mjs";
 import { generateCourseFromSourceAI } from "../../../lib/ai.mjs";
+import { retrieveRelevant } from "../../../lib/retrieval.mjs";
+import { enrichCoursePedagogy } from "../../../lib/pedagogy.mjs";
+import { assessCourseCoverage } from "../../../lib/coverage.mjs";
 import { authorizeRequest } from "../../../lib/auth.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
@@ -24,11 +27,32 @@ export async function POST(request: Request) {
   const source = inlineSource ?? (sourceId ? await store.getSource(organisationId, sourceId) : null);
   if (!source) return Response.json({ error: "Unknown source." }, { status: 404 });
 
+  const resolvedSourceId = (source as { id?: string }).id ?? sourceId;
+
+  // Semantic retrieval (RAG): attach the passages most relevant to the source's
+  // concept so the grounded LLM lesson bodies draw on the strongest evidence.
+  const typedSource = source as { explanation?: string; title?: string; retrievedPassages?: string[] };
+  try {
+    if (resolvedSourceId) {
+      const chunks = await store.listKnowledgeChunks(organisationId, resolvedSourceId);
+      const query = typedSource.explanation || typedSource.title || "";
+      const { passages } = await retrieveRelevant(env as unknown as Record<string, unknown>, { ...(source as object), knowledgeChunks: chunks }, query, { k: 4 });
+      if (passages.length) typedSource.retrievedPassages = passages.map((passage: { content: string }) => passage.content);
+    }
+  } catch {
+    // Best-effort; generation still works from the full approved text.
+  }
+
   const generated = await generateCourseFromSourceAI(env as unknown as Record<string, unknown>, source, { generatedAt: new Date().toISOString() });
   if (!generated.ok) return Response.json({ error: generated.message, reason: generated.reason }, { status: 422 });
 
-  const course = body.approve === true ? approveCourse(generated) : generated;
-  const resolvedSourceId = (source as { id?: string }).id ?? sourceId;
+  // Pedagogy-aware enrichment (Bloom objectives, varied grounded question types,
+  // rationale + difficulty) and a grounding/coverage assessment for the author.
+  const typedKnowledge = (source as { types?: Record<string, unknown> }).types ?? {};
+  const enriched = enrichCoursePedagogy(generated, source, typedKnowledge);
+  enriched.coverageReport = assessCourseCoverage(source, enriched);
+
+  const course = body.approve === true ? approveCourse(enriched) : enriched;
 
   // Persist the generated course so it survives reloads and is available to
   // learners once published. One course per source: regeneration updates it.
