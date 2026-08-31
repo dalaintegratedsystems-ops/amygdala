@@ -24,6 +24,7 @@ export type StoredSource = {
   documentType?: string | null;
   outline?: Array<{ section: string; summary: string; charCount: number }>;
   coverage?: Coverage | null;
+  types?: TypedKnowledge | null;
 };
 
 export type Coverage = {
@@ -38,7 +39,37 @@ export type Coverage = {
   outlineSectionsRaw?: number;
 };
 
-export type QuizQuestion = { id: string; question: string; options: string[]; correct?: number; citation: Citation };
+export type OptionFeedback = { option: string; correct: boolean; feedback: string };
+
+export type QuizQuestion = {
+  id: string;
+  question: string;
+  options: string[];
+  correct?: number;
+  citation: Citation;
+  type?: string;
+  rationale?: string;
+  optionFeedback?: OptionFeedback[];
+  difficulty?: string;
+  bloom?: string;
+};
+
+export type TypedKnowledge = {
+  concepts: string[];
+  definitions: Array<{ term: string; definition: string }>;
+  procedures: string[];
+  entities: string[];
+  shapes: string[];
+  counts: { concepts: number; definitions: number; procedures: number; entities: number };
+};
+
+export type CoverageReport = {
+  coveragePercent: number;
+  sectionsCovered: number;
+  sectionsTotal: number;
+  claims: { total: number; grounded: number; groundedRatio: number; ungrounded: Array<{ where: string; text: string; score: number }> };
+  confidence: { average: number; lessons: Array<{ id: string; title?: string; confidence: number }>; questions: Array<{ id: string; confidence: number }> };
+};
 
 export type LessonBlock =
   | { id: string; type: "text"; text: string; citation?: Citation }
@@ -105,7 +136,7 @@ export type IssuedCredential = {
   issuedAt: string;
 };
 
-export type CourseModule = { id: string; label: string; title: string; duration: number; citation: Citation };
+export type CourseModule = { id: string; label: string; title: string; duration: number; citation: Citation; objective?: string; bloom?: string; difficulty?: string };
 export type CourseLesson = { id: string; moduleId?: string; title: string; content: string; label: string; citation: Citation; blocks?: LessonBlock[] };
 
 export type GeneratedCourse = {
@@ -120,6 +151,8 @@ export type GeneratedCourse = {
   provenance: { generator: string; grounded: boolean; kind?: string; sourceVersion: string; sourceSection: string };
   citation: Citation;
   coverage?: Coverage | null;
+  coverageReport?: CoverageReport;
+  pedagogy?: { objectives: Array<{ moduleId: string; objective: string; bloom: string; difficulty: string }>; questionTypes: string[]; questionCount: number; shapes: string[] };
   reviewChecklist: string[];
 };
 

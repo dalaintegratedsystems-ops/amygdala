@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { deriveEditorHints } from "../lib/architect.mjs";
 import { generateProcedureDiagramSvg } from "../lib/simulation.mjs";
-import { BlueprintProposer, CopilotBar, HintsPanel } from "./CourseArchitect";
+import { BlueprintProposer, ConfidenceChip, CopilotBar, CoveragePanel, HintsPanel } from "./CourseArchitect";
 import { LessonBlockEditor, newBlock } from "./LessonBlockEditor";
 import { SourceExtractor } from "./SourceExtractor";
 import { BrandKitPanel } from "./BrandKit";
 import { extractPdfText } from "./pdf";
-import type { Blueprint, EditorHint, GeneratedCourse, LessonBlock, StoredSource } from "./types";
+import type { Blueprint, CoverageReport, EditorHint, GeneratedCourse, LessonBlock, StoredSource, TypedKnowledge } from "./types";
 
 const SAMPLE_DOC = `# Configure a workflow automation
 
@@ -29,6 +29,7 @@ type ExtractedResult = {
   grounding: { grounded: boolean; groundedCount: number; total: number };
   engine: { engine: string };
   summary: { chunks: number; procedureSteps: number; keywords: number; charsTotal?: number; charsProcessed?: number; outlineSections?: number };
+  types?: TypedKnowledge;
 };
 
 // Ensure every lesson has an editable blocks array (seeded from its text).
@@ -70,6 +71,8 @@ export function CourseWizard({ onPreviewLearner }: { onPreviewLearner: () => voi
   const [saveState, setSaveState] = useState("");
   const [busyHintId, setBusyHintId] = useState("");
   const [activeLessonId, setActiveLessonId] = useState("");
+  const [coverage, setCoverage] = useState<CoverageReport | undefined>(undefined);
+  const [coverageBusy, setCoverageBusy] = useState(false);
 
   const applyApproved = useCallback((sources: StoredSource[]) => {
     const approved = sources.filter((source) => source.status === "Published" && source.approvalStatus === "Approved");
@@ -129,9 +132,21 @@ export function CourseWizard({ onPreviewLearner }: { onPreviewLearner: () => voi
     setActiveSourceId(sourceRef);
     setActiveSource(source);
     setActiveLessonId(prepared.lessons[0]?.id ?? "");
+    setCoverage(prepared.coverageReport);
     setPublished(false);
     setStep(1);
   }, []);
+
+  const recheckCoverage = useCallback(async () => {
+    if (!course) return;
+    setCoverageBusy(true);
+    try {
+      const payload = activeSource ? { source: activeSource, course } : { sourceId: activeSourceId, course };
+      const response = await fetch("/api/authoring/coverage", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await response.json().catch(() => ({}));
+      if (data.report) setCoverage(data.report as CoverageReport);
+    } finally { setCoverageBusy(false); }
+  }, [course, activeSource, activeSourceId]);
 
   async function generate(fromSourceId: string, blueprint?: Blueprint) {
     if (!fromSourceId) return;
@@ -229,6 +244,7 @@ export function CourseWizard({ onPreviewLearner }: { onPreviewLearner: () => voi
   }
 
   const hints = course ? (deriveEditorHints(course) as EditorHint[]) : [];
+  const questionConfidence = new Map((coverage?.confidence.questions ?? []).map((entry) => [entry.id, entry.confidence]));
   const activeLesson = course?.lessons.find((lesson) => lesson.id === activeLessonId) ?? course?.lessons[0];
   const junkRejected = Boolean(extractError) && /readable document content|low-signal/i.test(extractError);
 
@@ -269,6 +285,22 @@ export function CourseWizard({ onPreviewLearner }: { onPreviewLearner: () => voi
                 </div>
                 <p className="extract-summary">{extracted.source.explanation}</p>
                 <div className="keyword-chips">{extracted.source.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}</div>
+                {extracted.types && (
+                  <div className="typed-knowledge">
+                    <span className="tiny-label">Structured knowledge extracted</span>
+                    <div className="typed-counts">
+                      <span><strong>{extracted.types.counts.concepts}</strong> concepts</span>
+                      <span><strong>{extracted.types.counts.definitions}</strong> definitions</span>
+                      <span><strong>{extracted.types.counts.procedures}</strong> procedure steps</span>
+                      <span><strong>{extracted.types.counts.entities}</strong> key entities</span>
+                    </div>
+                    {extracted.types.definitions.length > 0 && (
+                      <ul className="typed-definitions">
+                        {extracted.types.definitions.slice(0, 4).map((entry) => <li key={entry.term}><strong>{entry.term}</strong> — {entry.definition}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 <div className="extract-cta">
                   {!sourcePublished ? <button type="button" className="button button-secondary" onClick={publishSource}>Approve &amp; publish source</button> : <span className="approved-note">✓ Source published</span>}
                   <button type="button" className="button button-primary" onClick={() => { setStep(1); }} disabled={!sourcePublished}>Continue to AI draft →</button>
@@ -322,7 +354,22 @@ export function CourseWizard({ onPreviewLearner }: { onPreviewLearner: () => voi
                     </div>
                   ))}
 
-                  <div className="studio-assessment"><span className="tiny-label">Assessment · pass threshold {course.assessment.passThreshold}%</span>{course.assessment.questions.map((question) => <div className="studio-question" key={question.id}><strong>{question.question}</strong><em>Approved answer: {question.options[question.correct ?? 0]}</em></div>)}</div>
+                  <div className="studio-assessment"><span className="tiny-label">Assessment · pass threshold {course.assessment.passThreshold}%{course.pedagogy ? ` · ${course.pedagogy.questionTypes.length} question types` : ""}</span>{course.assessment.questions.map((question) => {
+                    const conf = questionConfidence.get(question.id);
+                    return (
+                      <div className="studio-question" key={question.id}>
+                        <div className="studio-question-head">
+                          {question.type && <span className="q-tag">{question.type}</span>}
+                          {question.difficulty && <span className="q-tag q-difficulty">{question.difficulty}</span>}
+                          {question.bloom && <span className="q-tag q-bloom">Bloom: {question.bloom}</span>}
+                          {conf !== undefined && <ConfidenceChip value={conf} />}
+                        </div>
+                        <strong>{question.question}</strong>
+                        <em>Approved answer: {question.options[question.correct ?? 0]}</em>
+                        {question.rationale && <p className="q-rationale">{question.rationale}</p>}
+                      </div>
+                    );
+                  })}</div>
                 </section>
 
                 <aside className="editor-side">
@@ -330,6 +377,20 @@ export function CourseWizard({ onPreviewLearner }: { onPreviewLearner: () => voi
                     <div className="panel-header"><div><span className="tiny-label">Architect hints</span><h3>Recommendations</h3></div></div>
                     <HintsPanel hints={hints} onApply={applyHint} busyId={busyHintId} />
                   </section>
+                  <section className="panel">
+                    <div className="panel-header"><div><span className="tiny-label">Grounding &amp; coverage</span><h3>Coverage check</h3></div>{coverage && <span className="engine-badge small">{coverage.coveragePercent}% covered</span>}</div>
+                    <CoveragePanel report={coverage} onRecheck={recheckCoverage} busy={coverageBusy} />
+                  </section>
+                  {course.pedagogy && course.pedagogy.objectives.length > 0 && (
+                    <section className="panel">
+                      <div className="panel-header"><div><span className="tiny-label">Pedagogy</span><h3>Learning objectives</h3></div></div>
+                      <ul className="objective-list">
+                        {course.pedagogy.objectives.map((entry) => (
+                          <li key={entry.moduleId}><span className={`q-tag q-bloom`}>{entry.bloom}</span> {entry.objective}</li>
+                        ))}
+                      </ul>
+                    </section>
+                  )}
                   {activeSource && <section className="panel"><SourceExtractor source={activeSource} citation={activeLesson?.citation ?? course.citation} onInsert={insertBlock} /></section>}
                   <section className="panel studio-visual">
                     <span className="tiny-label">Simulation preview</span>

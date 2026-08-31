@@ -1,7 +1,53 @@
 "use client";
 
 import { useState } from "react";
-import type { Blueprint, BlueprintModule, EditorHint, GeneratedCourse, StoredSource } from "./types";
+import type { Blueprint, BlueprintModule, CoverageReport, EditorHint, GeneratedCourse, StoredSource } from "./types";
+
+// ---- Coverage & grounding review panel -------------------------------
+
+function confidenceTone(value: number): string {
+  if (value >= 0.75) return "success";
+  if (value >= 0.5) return "info";
+  return "warning";
+}
+
+export function ConfidenceChip({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  return <span className={`confidence-chip confidence-${confidenceTone(value)}`} title="Grounding confidence">◆ {pct}% confidence</span>;
+}
+
+export function CoveragePanel({ report, onRecheck, busy }: { report?: CoverageReport; onRecheck?: () => void; busy?: boolean }) {
+  if (!report) {
+    return (
+      <div className="coverage-panel">
+        <p className="model-note">Run a coverage check to see how much of the source this course teaches and whether any claims look unsupported.</p>
+        {onRecheck && <button type="button" className="button button-secondary button-small" onClick={onRecheck} disabled={busy}>{busy ? "Checking…" : "Check coverage"}</button>}
+      </div>
+    );
+  }
+  return (
+    <div className="coverage-panel">
+      <div className="coverage-metrics">
+        <span><small>Source coverage</small><strong>{report.coveragePercent}%</strong><em>{report.sectionsCovered}/{report.sectionsTotal} sections</em></span>
+        <span><small>Grounded claims</small><strong>{Math.round(report.claims.groundedRatio * 100)}%</strong><em>{report.claims.grounded}/{report.claims.total}</em></span>
+        <span><small>Avg confidence</small><strong>{Math.round(report.confidence.average * 100)}%</strong></span>
+      </div>
+      {report.claims.ungrounded.length > 0 ? (
+        <div className="coverage-flags">
+          <span className="tiny-label">Possible unsupported claims — review before publish</span>
+          <ul className="check-list">
+            {report.claims.ungrounded.map((claim, index) => (
+              <li key={index} className="coverage-flag"><em>{claim.where}</em>{claim.text}</li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="approved-note">✓ No unsupported claims detected against the source.</p>
+      )}
+      {onRecheck && <button type="button" className="button button-secondary button-small" onClick={onRecheck} disabled={busy}>{busy ? "Checking…" : "Re-check coverage"}</button>}
+    </div>
+  );
+}
 
 // ---- Blueprint proposer ----------------------------------------------
 
