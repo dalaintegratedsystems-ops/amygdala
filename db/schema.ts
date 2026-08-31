@@ -1,137 +1,285 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+// Phase 0 schema: a small, purpose-built set of tables for exactly the
+// entities the live flows persist. Everything starts EMPTY — no seed content.
+
 const timestamps = {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 };
 
+// A tenant workspace (the vendor creating onboarding).
 export const organisations = sqliteTable("organisations", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  type: text("type", { enum: ["vendor", "customer"] }).notNull(),
-  vendorOrganisationId: text("vendor_organisation_id"),
+  type: text("type").notNull().default("vendor"),
   ...timestamps,
 });
 
+// Authenticated users with PBKDF2 credentials, scoped to one organisation.
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
-  externalIdentityHash: text("external_identity_hash").notNull(),
+  email: text("email").notNull(),
   displayName: text("display_name").notNull(),
-  ...timestamps,
-}, (table) => [uniqueIndex("idx_users_external_identity_hash").on(table.externalIdentityHash)]);
-
-export const memberships = sqliteTable("memberships", {
-  id: text("id").primaryKey(),
   organisationId: text("organisation_id").notNull(),
-  userId: text("user_id").notNull(),
   role: text("role").notNull(),
-  status: text("status").notNull(),
+  salt: text("salt").notNull(),
+  hash: text("hash").notNull(),
+  iterations: integer("iterations").notNull(),
   ...timestamps,
-}, (table) => [uniqueIndex("idx_memberships_organisation_user").on(table.organisationId, table.userId), index("idx_memberships_user_id").on(table.userId)]);
+}, (table) => [uniqueIndex("idx_users_email").on(table.email)]);
 
-export const products = sqliteTable("products", {
+// An uploaded / ingested source document plus its span-verified derived
+// knowledge (explanation, procedure, keywords) stored as JSON.
+export const sources = sqliteTable("sources", {
   id: text("id").primaryKey(),
   organisationId: text("organisation_id").notNull(),
-  name: text("name").notNull(),
-  currentVersion: text("current_version").notNull(),
-  ...timestamps,
-}, (table) => [index("idx_products_organisation_id").on(table.organisationId)]);
-
-export const sourceDocuments = sqliteTable("source_documents", {
-  id: text("id").primaryKey(),
-  organisationId: text("organisation_id").notNull(),
-  productId: text("product_id").notNull(),
   title: text("title").notNull(),
-  description: text("description").notNull(),
-  module: text("module").notNull(),
-  intendedRole: text("intended_role").notNull(),
-  contentOwner: text("content_owner").notNull(),
-  sourceType: text("source_type").notNull(),
+  description: text("description").notNull().default(""),
+  product: text("product").notNull().default(""),
+  module: text("module").notNull().default(""),
+  intendedRole: text("intended_role").notNull().default("All roles"),
+  contentOwner: text("content_owner").notNull().default(""),
+  type: text("type").notNull().default("Document"),
+  version: text("version").notNull().default("1.0"),
+  status: text("status").notNull().default("Draft"),
+  approvalStatus: text("approval_status").notNull().default("Pending"),
+  section: text("section").notNull().default(""),
   storageKey: text("storage_key"),
-  ...timestamps,
-}, (table) => [index("idx_source_documents_organisation_product").on(table.organisationId, table.productId)]);
-
-export const sourceVersions = sqliteTable("source_versions", {
-  id: text("id").primaryKey(),
-  organisationId: text("organisation_id").notNull(),
-  sourceDocumentId: text("source_document_id").notNull(),
-  version: text("version").notNull(),
-  status: text("status").notNull(),
-  approvalStatus: text("approval_status").notNull(),
+  extractedText: text("extracted_text").notNull().default(""),
+  explanation: text("explanation").notNull().default(""),
+  procedureJson: text("procedure_json").notNull().default("[]"),
+  keywordsJson: text("keywords_json").notNull().default("[]"),
+  // Whole-document knowledge for large-document handling: { documentType,
+  // outline, coverage }. JSON blob so the schema stays small and the store
+  // can tolerate its absence during rollout.
+  knowledgeJson: text("knowledge_json").notNull().default("{}"),
+  uploadDate: text("upload_date"),
   effectiveDate: text("effective_date"),
-  extractedText: text("extracted_text").notNull(),
-  approvedByMembershipId: text("approved_by_membership_id"),
-  approvedAt: text("approved_at"),
-  publishedAt: text("published_at"),
   ...timestamps,
-}, (table) => [index("idx_source_versions_document_status").on(table.sourceDocumentId, table.status), index("idx_source_versions_tenant_approval").on(table.organisationId, table.approvalStatus, table.status)]);
+}, (table) => [index("idx_sources_org_status").on(table.organisationId, table.status)]);
 
+// Retrieval-sized knowledge chunks for a source, each with an optional
+// embedding vector (JSON array) used for semantic retrieval (RAG). The store
+// tolerates this table's absence pre-migration and falls back to keyword
+// retrieval / on-the-fly chunking.
 export const knowledgeChunks = sqliteTable("knowledge_chunks", {
   id: text("id").primaryKey(),
   organisationId: text("organisation_id").notNull(),
-  sourceVersionId: text("source_version_id").notNull(),
-  section: text("section").notNull(),
-  content: text("content").notNull(),
-  tokenCount: integer("token_count").notNull(),
+  sourceId: text("source_id").notNull(),
+  chunkIndex: integer("chunk_index").notNull().default(0),
+  section: text("section").notNull().default(""),
+  content: text("content").notNull().default(""),
+  tokenCount: integer("token_count").notNull().default(0),
+  // JSON-encoded number[] embedding, or "" when embeddings were unavailable.
+  embeddingJson: text("embedding_json").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_knowledge_chunks_source").on(table.organisationId, table.sourceId)]);
+
+// A generated course (programme + modules + lessons + assessment +
+// simulation), stored as JSON and linked back to its grounding source.
+export const courses = sqliteTable("courses", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  sourceId: text("source_id").notNull(),
+  title: text("title").notNull(),
+  role: text("role").notNull().default(""),
+  status: text("status").notNull().default("Draft"),
+  approvalStatus: text("approval_status").notNull().default("Pending"),
+  courseJson: text("course_json").notNull(),
   ...timestamps,
-}, (table) => [index("idx_knowledge_chunks_tenant_source").on(table.organisationId, table.sourceVersionId)]);
+}, (table) => [index("idx_courses_org_status").on(table.organisationId, table.status)]);
 
-export const trainingProgrammes = sqliteTable("training_programmes", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), productId: text("product_id").notNull(), title: text("title").notNull(), role: text("role").notNull(), status: text("status").notNull(), ...timestamps,
-}, (table) => [index("idx_programmes_organisation_product").on(table.organisationId, table.productId)]);
+// Per-workspace brand kit (logo, colours, font) applied through the app's CSS
+// custom properties. One row per organisation.
+export const brandKits = sqliteTable("brand_kits", {
+  organisationId: text("organisation_id").primaryKey(),
+  workspaceName: text("workspace_name").notNull().default(""),
+  logoKey: text("logo_key"),
+  primaryColor: text("primary_color").notNull().default(""),
+  accentColor: text("accent_color").notNull().default(""),
+  fontFamily: text("font_family").notNull().default(""),
+  ...timestamps,
+});
 
-export const trainingModules = sqliteTable("training_modules", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), programmeId: text("programme_id").notNull(), title: text("title").notNull(), objective: text("objective").notNull(), sequence: integer("sequence").notNull(), mandatory: integer("mandatory", { mode: "boolean" }).notNull(), ...timestamps,
-}, (table) => [index("idx_modules_programme_sequence").on(table.programmeId, table.sequence)]);
-
-export const lessons = sqliteTable("lessons", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), moduleId: text("module_id").notNull(), title: text("title").notNull(), content: text("content").notNull(), sequence: integer("sequence").notNull(), ...timestamps,
-}, (table) => [index("idx_lessons_module_sequence").on(table.moduleId, table.sequence)]);
-
-export const learnerAssignments = sqliteTable("learner_assignments", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), learnerMembershipId: text("learner_membership_id").notNull(), programmeId: text("programme_id").notNull(), pathwayLevel: text("pathway_level").notNull(), diagnosticScore: integer("diagnostic_score"), status: text("status").notNull(), assignedAt: text("assigned_at").notNull(), ...timestamps,
-}, (table) => [index("idx_assignments_tenant_learner").on(table.organisationId, table.learnerMembershipId)]);
-
-export const learnerProgress = sqliteTable("learner_progress", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), assignmentId: text("assignment_id").notNull(), moduleId: text("module_id").notNull(), completionPercent: integer("completion_percent").notNull(), completedAt: text("completed_at"), ...timestamps,
-}, (table) => [uniqueIndex("idx_progress_assignment_module").on(table.assignmentId, table.moduleId)]);
-
+// A vendor SaaS simulation definition: an authored guided overlay on top of
+// either an embedded sandbox URL (iframe) or a set of uploaded screenshots
+// (DOM-capture fallback). Steps are ordered hotspots + coaching. Everything
+// is a JSON blob so the schema stays small and tolerant during rollout.
 export const simulations = sqliteTable("simulations", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), moduleId: text("module_id").notNull(), title: text("title").notNull(), definitionJson: text("definition_json").notNull(), ...timestamps,
-}, (table) => [index("idx_simulations_tenant_module").on(table.organisationId, table.moduleId)]);
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  // "iframe" (embed a sandbox URL) or "screenshot" (guided walkthrough over
+  // author-uploaded screens). Never points at a production system.
+  mode: text("mode").notNull().default("iframe"),
+  targetUrl: text("target_url").notNull().default(""),
+  // Cached embeddability probe result (0/1). Non-embeddable targets fall back
+  // to the screenshot walkthrough.
+  embeddable: integer("embeddable").notNull().default(1),
+  // Optional postMessage bridge for real step detection when the vendor
+  // cooperates; otherwise the learner advances steps manually.
+  bridgeEnabled: integer("bridge_enabled").notNull().default(0),
+  status: text("status").notNull().default("Draft"),
+  // Ordered steps: [{ id, label, coaching, hotspot:{ x, y, w, h }, screenIndex,
+  //   match:{ event } }].
+  stepsJson: text("steps_json").notNull().default("[]"),
+  // Screenshot-fallback screens: [{ key, alt, width, height }].
+  screensJson: text("screens_json").notNull().default("[]"),
+  ...timestamps,
+}, (table) => [index("idx_simulations_org").on(table.organisationId, table.status)]);
 
-export const simulationAttempts = sqliteTable("simulation_attempts", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), simulationId: text("simulation_id").notNull(), assignmentId: text("assignment_id").notNull(), attemptNumber: integer("attempt_number").notNull(), errorCount: integer("error_count").notNull(), competencyScore: integer("competency_score").notNull(), completedAt: text("completed_at"), ...timestamps,
-}, (table) => [index("idx_simulation_attempts_assignment").on(table.assignmentId, table.simulationId)]);
+// Per-workspace allow-list of origins that may be embedded in the simulator.
+// The simulator refuses to embed any origin not on this list.
+export const simOrigins = sqliteTable("sim_origins", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  origin: text("origin").notNull(),
+  label: text("label").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("idx_sim_origins_org_origin").on(table.organisationId, table.origin)]);
 
-export const assessments = sqliteTable("assessments", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), programmeId: text("programme_id").notNull(), title: text("title").notNull(), passThreshold: integer("pass_threshold").notNull(), questionsJson: text("questions_json").notNull(), ...timestamps,
-}, (table) => [index("idx_assessments_tenant_programme").on(table.organisationId, table.programmeId)]);
+// Per-learner progress for a course. The signed-in user is the learner; this
+// single row survives reload and holds the latest component scores + the
+// derived readiness. One row per (organisation, user, course).
+export const learnerProgress = sqliteTable("learner_progress", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  courseId: text("course_id").notNull(),
+  learningScore: integer("learning_score").notNull().default(0),
+  simulationScore: integer("simulation_score").notNull().default(0),
+  assessmentScore: integer("assessment_score").notNull().default(0),
+  readiness: integer("readiness").notNull().default(0),
+  status: text("status").notNull().default("in-progress"),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_learner_progress_key").on(table.organisationId, table.userId, table.courseId)]);
 
-export const assessmentAttempts = sqliteTable("assessment_attempts", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), assessmentId: text("assessment_id").notNull(), assignmentId: text("assignment_id").notNull(), score: integer("score").notNull(), passed: integer("passed", { mode: "boolean" }).notNull(), answersJson: text("answers_json").notNull(), completedAt: text("completed_at").notNull(), ...timestamps,
-}, (table) => [index("idx_assessment_attempts_assignment").on(table.assignmentId, table.assessmentId)]);
+// Append-only record of individual simulation / assessment attempts.
+export const learnerAttempts = sqliteTable("learner_attempts", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  courseId: text("course_id").notNull(),
+  kind: text("kind").notNull(),
+  refId: text("ref_id").notNull().default(""),
+  score: integer("score").notNull().default(0),
+  detailJson: text("detail_json").notNull().default("{}"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_learner_attempts_key").on(table.organisationId, table.userId, table.courseId)]);
 
-export const aiConversations = sqliteTable("ai_conversations", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), assignmentId: text("assignment_id").notNull(), moduleId: text("module_id"), mode: text("mode").notNull(), ...timestamps,
-}, (table) => [index("idx_ai_conversations_tenant_assignment").on(table.organisationId, table.assignmentId)]);
+// Issued readiness credentials, one per (organisation, user, course).
+export const credentials = sqliteTable("credentials", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  courseId: text("course_id").notNull(),
+  learner: text("learner").notNull().default(""),
+  programme: text("programme").notNull().default(""),
+  readiness: integer("readiness").notNull().default(0),
+  breakdownJson: text("breakdown_json").notNull().default("{}"),
+  issuedAt: text("issued_at").notNull(),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_credentials_key").on(table.organisationId, table.userId, table.courseId)]);
 
-export const aiMessages = sqliteTable("ai_messages", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), conversationId: text("conversation_id").notNull(), role: text("role").notNull(), content: text("content").notNull(), answerStatus: text("answer_status"), feedback: text("feedback"), createdAt: text("created_at").notNull(),
-}, (table) => [index("idx_ai_messages_tenant_conversation").on(table.organisationId, table.conversationId)]);
+// Workstream B — learner management. Additive, tenant-scoped tables. The store
+// tolerates their absence pre-migration (reads fall back to safe defaults), so
+// deploying before migrating degrades gracefully.
 
-export const sourceCitations = sqliteTable("source_citations", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), aiMessageId: text("ai_message_id").notNull(), sourceVersionId: text("source_version_id").notNull(), knowledgeChunkId: text("knowledge_chunk_id").notNull(), section: text("section").notNull(), createdAt: text("created_at").notNull(),
-}, (table) => [index("idx_citations_message").on(table.aiMessageId), index("idx_citations_tenant_source").on(table.organisationId, table.sourceVersionId)]);
+// Lifecycle + security profile for a user, kept off the `users` table so the
+// login path (which selects explicit columns) is never affected by rollout.
+// status: active | invited | suspended | deactivated. One row per user.
+export const userProfiles = sqliteTable("user_profiles", {
+  userId: text("user_id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  status: text("status").notNull().default("active"),
+  // Base32 TOTP secret (empty until enrolled) + a 0/1 enabled flag.
+  mfaSecret: text("mfa_secret").notNull().default(""),
+  mfaEnabled: integer("mfa_enabled").notNull().default(0),
+  ...timestamps,
+}, (table) => [index("idx_user_profiles_org").on(table.organisationId)]);
 
-export const escalations = sqliteTable("escalations", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), aiMessageId: text("ai_message_id").notNull(), assignedMembershipId: text("assigned_membership_id"), status: text("status").notNull(), resolution: text("resolution"), ...timestamps,
-}, (table) => [index("idx_escalations_tenant_status").on(table.organisationId, table.status)]);
+// Per-workspace custom role: a name + an explicit capability set (JSON array).
+// Enforced through the same `authorize` decision as the built-in tiers.
+export const customRoles = sqliteTable("custom_roles", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  name: text("name").notNull(),
+  capabilitiesJson: text("capabilities_json").notNull().default("[]"),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_custom_roles_org_name").on(table.organisationId, table.name)]);
 
-export const certificates = sqliteTable("certificates", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), assignmentId: text("assignment_id").notNull(), credentialCode: text("credential_code").notNull(), readinessScore: integer("readiness_score").notNull(), issuedAt: text("issued_at").notNull(), ...timestamps,
-}, (table) => [uniqueIndex("idx_certificates_credential_code").on(table.credentialCode), uniqueIndex("idx_certificates_assignment").on(table.assignmentId)]);
+// A team / cohort. `autoEnrolRole` optionally pulls every user of a role into
+// the cohort automatically (computed at read time, not materialised).
+export const cohorts = sqliteTable("cohorts", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  autoEnrolRole: text("auto_enrol_role").notNull().default(""),
+  ...timestamps,
+}, (table) => [index("idx_cohorts_org").on(table.organisationId)]);
 
+// Explicit cohort membership (auto-enrolment is layered on at read time).
+export const cohortMembers = sqliteTable("cohort_members", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  cohortId: text("cohort_id").notNull(),
+  userId: text("user_id").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("idx_cohort_members_key").on(table.cohortId, table.userId)]);
+
+// A course assignment targeting a single user, a cohort, or a role. Auto-enrol
+// is expressed by cohort/role targets and expanded by the assignment engine.
+export const assignments = sqliteTable("assignments", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  // "user" | "cohort" | "role"
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(),
+  courseId: text("course_id").notNull(),
+  dueDate: text("due_date"),
+  required: integer("required").notNull().default(1),
+  note: text("note").notNull().default(""),
+  createdBy: text("created_by").notNull().default(""),
+  ...timestamps,
+}, (table) => [index("idx_assignments_org").on(table.organisationId)]);
+
+// In-app notifications (assignment nudges, invites). Email delivery is a seam.
+export const notifications = sqliteTable("notifications", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  kind: text("kind").notNull().default("info"),
+  title: text("title").notNull().default(""),
+  body: text("body").notNull().default(""),
+  readAt: text("read_at"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_notifications_user").on(table.organisationId, table.userId)]);
+
+// Per-workspace SSO/SCIM provisioning config. Activation needs an external IdP;
+// the seam persists the config and group->role mapping without faking it live.
+export const provisioningConfig = sqliteTable("provisioning_config", {
+  organisationId: text("organisation_id").primaryKey(),
+  ssoEnabled: integer("sso_enabled").notNull().default(0),
+  scimEnabled: integer("scim_enabled").notNull().default(0),
+  allowedDomainsJson: text("allowed_domains_json").notNull().default("[]"),
+  groupRoleMapJson: text("group_role_map_json").notNull().default("{}"),
+  defaultRole: text("default_role").notNull().default("Learner"),
+  scimTokenHash: text("scim_token_hash").notNull().default(""),
+  ...timestamps,
+});
+
+// Append-only, tenant-scoped audit trail.
 export const auditEvents = sqliteTable("audit_events", {
-  id: text("id").primaryKey(), organisationId: text("organisation_id").notNull(), actorMembershipId: text("actor_membership_id"), eventType: text("event_type").notNull(), entityType: text("entity_type").notNull(), entityId: text("entity_id").notNull(), detailJson: text("detail_json").notNull(), createdAt: text("created_at").notNull(),
-}, (table) => [index("idx_audit_events_tenant_created").on(table.organisationId, table.createdAt), index("idx_audit_events_entity").on(table.entityType, table.entityId)]);
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  actor: text("actor"),
+  role: text("role"),
+  eventType: text("event_type").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id").notNull(),
+  detail: text("detail").notNull().default(""),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_audit_events_org_created").on(table.organisationId, table.createdAt)]);

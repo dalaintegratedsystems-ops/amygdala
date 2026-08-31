@@ -36,5 +36,15 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      # Builds the worker and runs the offline test suite, including the
+      # dist-worker API smoke tests (login -> ingest -> generate -> guide and
+      # the simulation + learner-persistence round-trip). No production, no
+      # network, no browser download.
       - name: Build and test
         run: npm test
+
+      # Surface known-vulnerable dependencies without blocking the pipeline.
+      # High severity and above only, production dependencies only.
+      - name: Dependency audit (high severity, non-blocking)
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true

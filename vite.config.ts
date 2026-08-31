@@ -8,6 +8,15 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 
+// Custom domains attached to the deployed Worker (Cloudflare "Custom Domain"
+// routes). Applied only at build time so local dev is unaffected. Override
+// with DEPLOY_HOSTS="a.com,www.a.com" if the target domains change.
+const DEPLOY_HOSTS = (process.env.DEPLOY_HOSTS ?? "amygdalalishay.com,www.amygdalalishay.com")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+const deployRoutes = DEPLOY_HOSTS.map((pattern) => ({ pattern, custom_domain: true }));
+
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
@@ -33,7 +42,25 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ command }) => {
+  // Deploy-time bindings come from env so account-specific resources aren't
+  // hardcoded. Unset bindings are omitted, so a first deploy stays clean and
+  // real resources are enabled by setting the corresponding env var:
+  //   DEPLOY_R2_BUCKET  -> R2 bucket for source uploads (binding SOURCES)
+  //   DEPLOY_D1_ID/_NAME-> D1 database (binding DB)
+  //   DEPLOY_IMAGES=1   -> Cloudflare Images binding (IMAGES) for optimisation
+  const r2Bucket = process.env.DEPLOY_R2_BUCKET;
+  const d1Id = process.env.DEPLOY_D1_ID;
+  const withImages = process.env.DEPLOY_IMAGES === "1";
+  const workerConfig = command === "build"
+    ? {
+        ...localBindingConfig,
+        routes: deployRoutes,
+        r2_buckets: r2Bucket ? [{ binding: "SOURCES", bucket_name: r2Bucket }] : [],
+        d1_databases: d1Id ? [{ binding: "DB", database_name: process.env.DEPLOY_D1_NAME || "amygdala-db", database_id: d1Id }] : [],
+        ...(withImages ? { images: { binding: "IMAGES" } } : {}),
+      }
+    : localBindingConfig;
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -52,7 +79,7 @@ export default defineConfig(async () => {
       sites(),
       cloudflare({
         viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
+        config: workerConfig,
       }),
     ],
   };

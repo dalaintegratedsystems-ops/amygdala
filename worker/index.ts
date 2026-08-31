@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { logRequest, reportError, withSecurityHeaders } from "./http";
 
 interface Env {
   ASSETS: Fetcher;
@@ -13,6 +14,9 @@ interface Env {
       };
     };
   };
+  CSP_MODE?: string;
+  SENTRY_DSN?: string;
+  SENTRY_ENVIRONMENT?: string;
 }
 
 interface ExecutionContext {
@@ -29,6 +33,8 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    const started = Date.now();
+    const requestId = request.headers.get("cf-ray") ?? crypto.randomUUID();
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
@@ -41,7 +47,18 @@ const worker = {
       }, allowedWidths);
     }
 
-    return handler.fetch(request, env, ctx);
+    try {
+      const response = await handler.fetch(request, env, ctx);
+      const secured = withSecurityHeaders(response, env);
+      logRequest({ method: request.method, path: url.pathname, status: secured.status, durationMs: Date.now() - started, requestId });
+      return secured;
+    } catch (error) {
+      // Unhandled exception: log it, fire the (optional) Sentry seam, and
+      // return a minimal 500 rather than letting the Worker crash.
+      logRequest({ method: request.method, path: url.pathname, status: 500, durationMs: Date.now() - started, requestId, error: error instanceof Error ? error.message : String(error) });
+      ctx.waitUntil(reportError(env, error, { requestId, path: url.pathname, method: request.method }));
+      return withSecurityHeaders(new Response("Internal Server Error", { status: 500, headers: { "content-type": "text/plain" } }), env);
+    }
   },
 };
 
