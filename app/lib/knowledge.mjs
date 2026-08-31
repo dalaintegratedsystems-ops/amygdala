@@ -40,8 +40,9 @@ export function extractDefinitions(text, { max = 16 } = {}) {
   };
 
   // Primary signal: quoted defined terms ("learner" means …), the standard
-  // statute/policy convention. The definition runs to the next ; or .
-  const quoted = /["'“”‘’]([A-Za-z][^"'“”‘’]{1,60}?)["'“”‘’]\s+means\b[,:]?\s*[—–-]?\s*([^;.]{8,240})/gi;
+  // statute/policy convention. Definitions are ;-separated, so the definition
+  // runs to the next semicolon (statutory cross-references contain periods).
+  const quoted = /["'“”‘’]([A-Za-z][^"'“”‘’]{1,60}?)["'“”‘’]\s+means\b[,:]?\s*[—–-]?\s*([^;]{8,240})/gi;
   let match;
   while ((match = quoted.exec(normalized)) && defs.length < max) add(match[1], match[2]);
 
