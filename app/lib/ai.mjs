@@ -25,6 +25,9 @@ import { citeSpans, copilotFallback, deriveEditorHints, proposeBlueprint } from 
 
 export const MODEL = "gpt-5.6-sol";
 export const EMBED_MODEL = "text-embedding-3-small";
+// Reduced-dimension embeddings keep in-DB cosine cheap and the stored vector
+// small enough to persist in D1. Query + stored vectors MUST share this value.
+export const EMBED_DIMENSIONS = 256;
 export const NO_KEY = "no-openai-key";
 const ENDPOINT = "https://api.openai.com/v1/responses";
 const EMBED_ENDPOINT = "https://api.openai.com/v1/embeddings";
@@ -100,7 +103,7 @@ export async function embedTexts(env, texts, { model = EMBED_MODEL, timeoutMs = 
       const response = await fetch(EMBED_ENDPOINT, {
         method: "POST",
         headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-        body: JSON.stringify({ model, input: batch }),
+        body: JSON.stringify({ model, input: batch, dimensions: EMBED_DIMENSIONS }),
         signal: controller.signal,
       });
       if (!response.ok) throw new Error(`openai-embed-http-${response.status}`);

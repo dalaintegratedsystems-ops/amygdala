@@ -137,14 +137,19 @@ function createD1Store(db) {
       }));
       try {
         await db.delete(schema.knowledgeChunks).where(and(eq(schema.knowledgeChunks.organisationId, organisationId), eq(schema.knowledgeChunks.sourceId, sourceId)));
-        // D1 caps bound variables per statement; insert in modest batches.
-        for (let start = 0; start < rows.length; start += 20) {
-          const batch = rows.slice(start, start + 20);
-          if (batch.length) await db.insert(schema.knowledgeChunks).values(batch);
+        // Embedding JSON is sizeable; keep each INSERT statement small so it
+        // stays within D1's per-statement size limit.
+        let written = 0;
+        for (let start = 0; start < rows.length; start += 5) {
+          const batch = rows.slice(start, start + 5);
+          if (batch.length) {
+            await db.insert(schema.knowledgeChunks).values(batch);
+            written += batch.length;
+          }
         }
-        return rows.length;
+        return written;
       } catch {
-        // Table not yet migrated — semantic retrieval degrades to keyword.
+        // Table not yet migrated / write failure — retrieval degrades to keyword.
         return 0;
       }
     },
