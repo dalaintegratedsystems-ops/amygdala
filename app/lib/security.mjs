@@ -4,30 +4,76 @@
 // model, a tenant-isolation decision, the grounded AI-adapter description and
 // audit-export helpers used by the API routes.
 
-// Platform roles and the capabilities each one grants.
+// The full capability catalogue (id + human label) used by the RBAC console and
+// custom-role editor. Kept flat and small — a capability model, not a policy
+// engine.
+export const capabilityCatalog = [
+  { id: "view-admin", label: "Access the admin workspace" },
+  { id: "manage-sources", label: "Upload & edit knowledge sources" },
+  { id: "approve-source", label: "Approve / reject sources" },
+  { id: "publish-source", label: "Publish approved sources" },
+  { id: "generate-course", label: "Generate grounded courses" },
+  { id: "view-ai-activity", label: "View AI guidance activity" },
+  { id: "view-analytics", label: "View analytics" },
+  { id: "export-audit", label: "Export the audit trail" },
+  { id: "manage-users", label: "Manage user accounts" },
+  { id: "assign-roles", label: "Assign roles to users" },
+  { id: "manage-roles", label: "Create custom roles" },
+  { id: "manage-cohorts", label: "Manage cohorts / teams" },
+  { id: "manage-assignments", label: "Assign courses & pathways" },
+  { id: "view-manager-dashboard", label: "View the manager dashboard" },
+  { id: "send-nudge", label: "Send learner nudges" },
+  { id: "import-users", label: "Bulk-import users (CSV)" },
+  { id: "manage-provisioning", label: "Configure SSO / SCIM" },
+  { id: "ask-guide", label: "Ask the Product Guide" },
+  { id: "view-learner", label: "Access the learner workspace" },
+  { id: "view-assignments", label: "View own assignments" },
+  { id: "complete-training", label: "Complete training & assessments" },
+];
+
+export const allCapabilities = capabilityCatalog.map((entry) => entry.id);
+
+// Admin-tier capabilities shared by Org Owner / Admin / the legacy Vendor
+// Administrator role. Least-privilege tiers below narrow from here.
+const ADMIN_CAPS = [
+  "view-admin", "manage-sources", "approve-source", "publish-source", "generate-course",
+  "view-ai-activity", "view-analytics", "export-audit", "ask-guide",
+  "manage-users", "assign-roles", "manage-roles", "manage-cohorts", "manage-assignments",
+  "view-manager-dashboard", "send-nudge", "import-users", "manage-provisioning",
+];
+const LEARNER_CAPS = ["view-learner", "ask-guide", "complete-training", "view-assignments"];
+
+// Platform roles and the capabilities each one grants. Clear tiers
+// (Org Owner › Admin › Training Manager › Author › Reviewer › Learner) plus the
+// original role names kept as aliases so existing sessions/tests keep working.
 export const platformRoleCapabilities = {
-  "Vendor Administrator": [
-    "view-admin",
-    "manage-sources",
-    "approve-source",
-    "publish-source",
-    "generate-course",
-    "view-ai-activity",
-    "view-analytics",
-    "export-audit",
-    "ask-guide",
-  ],
+  "Org Owner": [...allCapabilities],
+  "Admin": [...ADMIN_CAPS],
   "Training Manager": [
-    "view-admin",
-    "manage-sources",
-    "approve-source",
-    "generate-course",
-    "view-ai-activity",
-    "view-analytics",
-    "ask-guide",
+    "view-admin", "manage-sources", "approve-source", "generate-course",
+    "view-ai-activity", "view-analytics", "ask-guide",
+    "manage-cohorts", "manage-assignments", "view-manager-dashboard", "send-nudge", "import-users",
   ],
-  "Customer Learner": ["view-learner", "ask-guide", "complete-training"],
+  "Author": ["view-admin", "manage-sources", "generate-course", "ask-guide"],
+  "Reviewer": ["view-admin", "approve-source", "view-ai-activity", "ask-guide"],
+  "Learner": [...LEARNER_CAPS],
+  // Legacy aliases (pre-Workstream-B). Kept exactly as-permissive-or-more so
+  // existing tests and the live admin/learner sessions continue to work.
+  "Vendor Administrator": [...ADMIN_CAPS],
+  "Customer Learner": [...LEARNER_CAPS],
 };
+
+// The ordered tier list surfaced in the RBAC console (owner → learner).
+export const roleTiers = ["Org Owner", "Admin", "Training Manager", "Author", "Reviewer", "Learner"];
+
+// Resolve the effective capability set for a role. Built-in tiers come from the
+// table above; anything else is treated as a per-workspace custom role and
+// resolved from the provided custom-role list (name -> capabilities).
+export function resolveCapabilities(role, customRoles = []) {
+  if (platformRoleCapabilities[role]) return platformRoleCapabilities[role];
+  const custom = (customRoles || []).find((entry) => entry && entry.name === role);
+  return custom ? (custom.capabilities || []) : [];
+}
 
 // A principal may act on its own organisation only. (A vendor-owns-customer
 // hierarchy can be layered on later; P0 is one workspace per user.)
@@ -36,9 +82,11 @@ function tenantReachable(actorOrganisationId, resourceOrganisationId) {
 }
 
 // Central authorization decision: role capability AND tenant isolation.
-export function authorize({ role, action, actorOrganisationId, resourceOrganisationId } = {}) {
-  const capabilities = platformRoleCapabilities[role];
-  if (!capabilities || !capabilities.includes(action)) {
+// `capabilities` may be passed explicitly (e.g. resolved custom-role caps);
+// otherwise the built-in tier table is used, preserving the original contract.
+export function authorize({ role, action, actorOrganisationId, resourceOrganisationId, capabilities } = {}) {
+  const effective = capabilities ?? platformRoleCapabilities[role];
+  if (!effective || !effective.includes(action)) {
     return { allowed: false, reason: "insufficient-role" };
   }
   if (!tenantReachable(actorOrganisationId, resourceOrganisationId)) {

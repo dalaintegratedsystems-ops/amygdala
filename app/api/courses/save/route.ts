@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { approveCourse } from "../../../lib/authoring.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 // Persist author edits to a generated course (block-editor autosave, applied

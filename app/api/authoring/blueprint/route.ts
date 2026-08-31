@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { proposeBlueprintAI } from "../../../lib/ai.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 // Propose a course blueprint (modules, objectives, durations, difficulty,

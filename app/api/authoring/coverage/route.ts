@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { assessCourseCoverage } from "../../../lib/coverage.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 // Per-course grounding & coverage check for the author: how much of the source

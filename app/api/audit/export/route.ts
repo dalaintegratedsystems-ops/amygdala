@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { exportAuditEvents } from "../../../lib/security.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 export async function GET(request: Request) {

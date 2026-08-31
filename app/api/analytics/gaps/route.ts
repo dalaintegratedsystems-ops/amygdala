@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { analyzeDocumentationGaps } from "../../../lib/analytics.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 // Derive documentation gaps from real recorded AI activity (guide answers).

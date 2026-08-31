@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import { authorizeRequest, resolveRequestIdentity } from "../../lib/auth.mjs";
+import { authorizeRequest } from "../../lib/access.mjs";
+import { resolveRequestIdentity } from "../../lib/auth.mjs";
 
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml"]);
 const MAX_BYTES = 8 * 1024 * 1024;

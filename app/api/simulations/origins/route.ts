@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import { authorizeRequest, resolveRequestIdentity } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
+import { resolveRequestIdentity } from "../../../lib/auth.mjs";
 import { getStore } from "../../../lib/store.mjs";
 import { normaliseOrigin } from "../../../lib/simbuilder.mjs";
 

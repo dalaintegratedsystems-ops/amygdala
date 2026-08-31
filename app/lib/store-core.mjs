@@ -154,6 +154,13 @@ export function createMemoryStore() {
     attempts: [],
     credentials: new Map(),
     knowledgeChunks: new Map(),
+    userProfiles: new Map(),
+    customRoles: new Map(),
+    cohorts: new Map(),
+    cohortMembers: [],
+    assignments: [],
+    notifications: [],
+    provisioning: new Map(),
   };
 
   return {
@@ -182,9 +189,208 @@ export function createMemoryStore() {
     },
 
     async createUser(user) {
-      const record = { userId: user.userId, email: String(user.email).trim().toLowerCase(), displayName: user.displayName, organisationId: user.organisationId, role: user.role, credential: { ...user.credential } };
+      const record = { userId: user.userId, email: String(user.email).trim().toLowerCase(), displayName: user.displayName, organisationId: user.organisationId, role: user.role, credential: { ...user.credential }, createdAt: user.createdAt ?? now() };
       data.users.set(user.userId, record);
+      data.userProfiles.set(user.userId, { userId: user.userId, organisationId: user.organisationId, status: user.status ?? "active", mfaSecret: "", mfaEnabled: 0, updatedAt: record.createdAt });
       return user;
+    },
+
+    async findUserById(userId) {
+      const user = data.users.get(userId);
+      return user ? { ...user, credential: { ...user.credential } } : null;
+    },
+
+    async listUsers(organisationId) {
+      return [...data.users.values()]
+        .filter((user) => user.organisationId === organisationId)
+        .sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""))
+        .map((user) => {
+          const profile = data.userProfiles.get(user.userId);
+          return { userId: user.userId, email: user.email, displayName: user.displayName, organisationId: user.organisationId, role: user.role, status: profile?.status ?? "active", mfaEnabled: Boolean(profile?.mfaEnabled), createdAt: user.createdAt ?? null };
+        });
+    },
+
+    async updateUser(organisationId, userId, patch) {
+      const user = data.users.get(userId);
+      if (!user || user.organisationId !== organisationId) return null;
+      if (patch.displayName !== undefined) user.displayName = patch.displayName;
+      if (patch.role !== undefined) user.role = patch.role;
+      data.users.set(userId, user);
+      const profile = data.userProfiles.get(userId);
+      return { userId, email: user.email, displayName: user.displayName, organisationId, role: user.role, status: profile?.status ?? "active", mfaEnabled: Boolean(profile?.mfaEnabled) };
+    },
+
+    async setUserPassword(userId, credential) {
+      const user = data.users.get(userId);
+      if (!user) return null;
+      user.credential = { ...credential };
+      data.users.set(userId, user);
+      return { ok: true };
+    },
+
+    async getUserProfile(organisationId, userId) {
+      const profile = data.userProfiles.get(userId);
+      if (!profile || profile.organisationId !== organisationId) return { userId, organisationId, status: "active", mfaSecret: "", mfaEnabled: 0 };
+      return { ...profile };
+    },
+
+    async upsertUserProfile(organisationId, userId, patch) {
+      const existing = data.userProfiles.get(userId) ?? { userId, organisationId, status: "active", mfaSecret: "", mfaEnabled: 0 };
+      const merged = {
+        userId,
+        organisationId,
+        status: patch.status ?? existing.status ?? "active",
+        mfaSecret: patch.mfaSecret !== undefined ? patch.mfaSecret : existing.mfaSecret ?? "",
+        mfaEnabled: patch.mfaEnabled !== undefined ? (patch.mfaEnabled ? 1 : 0) : existing.mfaEnabled ?? 0,
+        updatedAt: now(),
+      };
+      data.userProfiles.set(userId, merged);
+      return { ...merged };
+    },
+
+    // ---- custom roles ------------------------------------------------
+
+    async listCustomRoles(organisationId) {
+      return [...data.customRoles.values()].filter((role) => role.organisationId === organisationId).sort((a, b) => a.name.localeCompare(b.name)).map((role) => ({ id: role.id, name: role.name, capabilities: [...role.capabilities] }));
+    },
+
+    async getCustomRoleByName(organisationId, name) {
+      const found = [...data.customRoles.values()].find((role) => role.organisationId === organisationId && role.name === name);
+      return found ? { id: found.id, name: found.name, capabilities: [...found.capabilities] } : null;
+    },
+
+    async createCustomRole(organisationId, { name, capabilities }) {
+      const existing = [...data.customRoles.values()].find((role) => role.organisationId === organisationId && role.name === name);
+      if (existing) { existing.capabilities = [...capabilities]; data.customRoles.set(existing.id, existing); return { id: existing.id, name: existing.name, capabilities: [...existing.capabilities] }; }
+      const record = { id: crypto.randomUUID(), organisationId, name, capabilities: [...capabilities], createdAt: now() };
+      data.customRoles.set(record.id, record);
+      return { id: record.id, name: record.name, capabilities: [...record.capabilities] };
+    },
+
+    async updateCustomRole(organisationId, id, patch) {
+      const role = data.customRoles.get(id);
+      if (!role || role.organisationId !== organisationId) return null;
+      if (patch.name !== undefined) role.name = patch.name;
+      if (patch.capabilities !== undefined) role.capabilities = [...patch.capabilities];
+      data.customRoles.set(id, role);
+      return { id: role.id, name: role.name, capabilities: [...role.capabilities] };
+    },
+
+    async deleteCustomRole(organisationId, id) {
+      const role = data.customRoles.get(id);
+      if (role && role.organisationId === organisationId) data.customRoles.delete(id);
+      return { ok: true };
+    },
+
+    // ---- cohorts + assignments ---------------------------------------
+
+    async listCohorts(organisationId) {
+      return [...data.cohorts.values()].filter((cohort) => cohort.organisationId === organisationId).sort((a, b) => a.name.localeCompare(b.name)).map((cohort) => ({ ...cohort }));
+    },
+
+    async getCohort(organisationId, id) {
+      const cohort = data.cohorts.get(id);
+      return cohort && cohort.organisationId === organisationId ? { ...cohort } : null;
+    },
+
+    async createCohort(organisationId, { name, description, autoEnrolRole }) {
+      const record = { id: crypto.randomUUID(), organisationId, name, description: description ?? "", autoEnrolRole: autoEnrolRole ?? "", createdAt: now() };
+      data.cohorts.set(record.id, record);
+      return { ...record };
+    },
+
+    async updateCohort(organisationId, id, patch) {
+      const cohort = data.cohorts.get(id);
+      if (!cohort || cohort.organisationId !== organisationId) return null;
+      for (const key of ["name", "description", "autoEnrolRole"]) if (patch[key] !== undefined) cohort[key] = patch[key];
+      data.cohorts.set(id, cohort);
+      return { ...cohort };
+    },
+
+    async deleteCohort(organisationId, id) {
+      const cohort = data.cohorts.get(id);
+      if (cohort && cohort.organisationId === organisationId) {
+        data.cohorts.delete(id);
+        data.cohortMembers = data.cohortMembers.filter((m) => !(m.organisationId === organisationId && m.cohortId === id));
+        data.assignments = data.assignments.filter((a) => !(a.organisationId === organisationId && a.targetType === "cohort" && a.targetId === id));
+      }
+      return { ok: true };
+    },
+
+    async addCohortMember(organisationId, cohortId, userId) {
+      const existing = data.cohortMembers.find((m) => m.organisationId === organisationId && m.cohortId === cohortId && m.userId === userId);
+      if (existing) return { ...existing };
+      const record = { id: crypto.randomUUID(), organisationId, cohortId, userId, createdAt: now() };
+      data.cohortMembers.push(record);
+      return { ...record };
+    },
+
+    async removeCohortMember(organisationId, cohortId, userId) {
+      data.cohortMembers = data.cohortMembers.filter((m) => !(m.organisationId === organisationId && m.cohortId === cohortId && m.userId === userId));
+      return { ok: true };
+    },
+
+    async listCohortMembers(organisationId, cohortId) {
+      return data.cohortMembers.filter((m) => m.organisationId === organisationId && m.cohortId === cohortId).map((m) => m.userId);
+    },
+
+    async listUserCohortIds(organisationId, userId) {
+      return data.cohortMembers.filter((m) => m.organisationId === organisationId && m.userId === userId).map((m) => m.cohortId);
+    },
+
+    async listAssignments(organisationId) {
+      return data.assignments.filter((a) => a.organisationId === organisationId).sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? "")).map((a) => ({ ...a }));
+    },
+
+    async createAssignment(organisationId, assignment) {
+      const record = { id: crypto.randomUUID(), organisationId, targetType: assignment.targetType, targetId: assignment.targetId, courseId: assignment.courseId, dueDate: assignment.dueDate ?? null, required: assignment.required === false ? 0 : 1, note: assignment.note ?? "", createdBy: assignment.createdBy ?? "", createdAt: now() };
+      data.assignments.push(record);
+      return { ...record };
+    },
+
+    async deleteAssignment(organisationId, id) {
+      data.assignments = data.assignments.filter((a) => !(a.organisationId === organisationId && a.id === id));
+      return { ok: true };
+    },
+
+    // ---- notifications -----------------------------------------------
+
+    async listNotifications(organisationId, userId) {
+      return data.notifications.filter((n) => n.organisationId === organisationId && n.userId === userId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map((n) => ({ ...n }));
+    },
+
+    async createNotification(organisationId, { userId, kind, title, body }) {
+      const record = { id: crypto.randomUUID(), organisationId, userId, kind: kind ?? "info", title: title ?? "", body: body ?? "", readAt: null, createdAt: now() };
+      data.notifications.push(record);
+      return { ...record };
+    },
+
+    async markNotificationRead(organisationId, id, userId) {
+      const note = data.notifications.find((n) => n.organisationId === organisationId && n.id === id && n.userId === userId);
+      if (note) note.readAt = now();
+      return { ok: Boolean(note) };
+    },
+
+    // ---- provisioning config -----------------------------------------
+
+    async getProvisioningConfig(organisationId) {
+      const config = data.provisioning.get(organisationId);
+      return config ? { ...config } : { organisationId, ssoEnabled: false, scimEnabled: false, allowedDomains: [], groupRoleMap: {}, defaultRole: "Learner", scimTokenHash: "" };
+    },
+
+    async upsertProvisioningConfig(organisationId, patch) {
+      const existing = data.provisioning.get(organisationId) ?? { organisationId, ssoEnabled: false, scimEnabled: false, allowedDomains: [], groupRoleMap: {}, defaultRole: "Learner", scimTokenHash: "" };
+      const merged = {
+        organisationId,
+        ssoEnabled: patch.ssoEnabled !== undefined ? Boolean(patch.ssoEnabled) : existing.ssoEnabled,
+        scimEnabled: patch.scimEnabled !== undefined ? Boolean(patch.scimEnabled) : existing.scimEnabled,
+        allowedDomains: patch.allowedDomains !== undefined ? [...patch.allowedDomains] : existing.allowedDomains,
+        groupRoleMap: patch.groupRoleMap !== undefined ? { ...patch.groupRoleMap } : existing.groupRoleMap,
+        defaultRole: patch.defaultRole !== undefined ? patch.defaultRole : existing.defaultRole,
+        scimTokenHash: patch.scimTokenHash !== undefined ? patch.scimTokenHash : existing.scimTokenHash,
+      };
+      data.provisioning.set(organisationId, merged);
+      return { ...merged };
     },
 
     async listSources(organisationId, { status } = {}) {
@@ -378,6 +584,10 @@ export function createMemoryStore() {
 
     async listLearnerProgress(organisationId, userId) {
       return [...data.learnerProgress.values()].filter((entry) => entry.organisationId === organisationId && entry.userId === userId).map((entry) => ({ ...entry }));
+    },
+
+    async listOrgProgress(organisationId) {
+      return [...data.learnerProgress.values()].filter((entry) => entry.organisationId === organisationId).map((entry) => ({ ...entry }));
     },
 
     async upsertLearnerProgress(organisationId, userId, courseId, patch) {

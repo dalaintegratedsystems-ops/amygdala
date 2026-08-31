@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { authorizeRequest } from "../../lib/auth.mjs";
+import { authorizeRequest } from "../../lib/access.mjs";
 import { getStore } from "../../lib/store.mjs";
 
 // Real command-centre overview: counts + recent activity for the tenant.

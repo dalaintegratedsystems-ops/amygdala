@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { authoringCopilotAI } from "../../../lib/ai.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 const ACTIONS = new Set(["make-concise", "rewrite-nontechnical", "expand", "objective", "generate-questions"]);

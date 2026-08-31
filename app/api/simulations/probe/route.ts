@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { detectEmbeddable, isAcceptableTarget } from "../../../lib/simbuilder.mjs";
 
 type RuntimeEnv = Record<string, unknown>;

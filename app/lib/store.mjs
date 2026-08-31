@@ -75,7 +75,19 @@ function createD1Store(db) {
         createdAt: timestamp,
         updatedAt: timestamp,
       });
+      try {
+        await db.insert(schema.userProfiles).values({ userId: user.userId, organisationId: user.organisationId, status: user.status ?? "active", mfaSecret: "", mfaEnabled: 0, createdAt: timestamp, updatedAt: timestamp });
+      } catch {
+        // Profile table not yet migrated — status defaults to active on read.
+      }
       return user;
+    },
+
+    async findUserById(userId) {
+      const rows = await db.select().from(schema.users).where(eq(schema.users.id, userId)).limit(1);
+      const row = rows[0];
+      if (!row) return null;
+      return { userId: row.id, email: row.email, displayName: row.displayName, organisationId: row.organisationId, role: row.role, credential: { salt: row.salt, hash: row.hash, iterations: row.iterations } };
     },
 
     async listSources(organisationId, { status } = {}) {
@@ -363,6 +375,15 @@ function createD1Store(db) {
       }
     },
 
+    async listOrgProgress(organisationId) {
+      try {
+        const rows = await db.select().from(schema.learnerProgress).where(eq(schema.learnerProgress.organisationId, organisationId));
+        return rows.map((row) => ({ organisationId, userId: row.userId, courseId: row.courseId, learningScore: row.learningScore, simulationScore: row.simulationScore, assessmentScore: row.assessmentScore, readiness: row.readiness, status: row.status, updatedAt: row.updatedAt }));
+      } catch {
+        return [];
+      }
+    },
+
     async upsertLearnerProgress(organisationId, userId, courseId, patch) {
       const timestamp = now();
       const existing = await this.getLearnerProgress(organisationId, userId, courseId);
@@ -444,6 +465,248 @@ function createD1Store(db) {
       }
       await db.insert(schema.credentials).values({ id: crypto.randomUUID(), organisationId: cred.organisationId, userId: cred.userId, courseId: cred.courseId, ...values, createdAt: timestamp, updatedAt: timestamp });
       return { organisationId: cred.organisationId, userId: cred.userId, courseId: cred.courseId, learner: values.learner, programme: values.programme, readiness: values.readiness, breakdown: cred.breakdown ?? {}, issuedAt: values.issuedAt };
+    },
+
+    // ---- user management (tolerant of pre-migration state) -----------
+
+    async listUsers(organisationId) {
+      const users = await db.select().from(schema.users).where(eq(schema.users.organisationId, organisationId));
+      let profiles = [];
+      try {
+        profiles = await db.select().from(schema.userProfiles).where(eq(schema.userProfiles.organisationId, organisationId));
+      } catch { profiles = []; }
+      const byId = new Map(profiles.map((p) => [p.userId, p]));
+      return users
+        .map((row) => {
+          const profile = byId.get(row.id);
+          return { userId: row.id, email: row.email, displayName: row.displayName, organisationId: row.organisationId, role: row.role, status: profile?.status ?? "active", mfaEnabled: Number(profile?.mfaEnabled ?? 0) !== 0, createdAt: row.createdAt ?? null };
+        })
+        .sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""));
+    },
+
+    async updateUser(organisationId, userId, patch) {
+      const update = { updatedAt: now() };
+      for (const key of ["displayName", "role"]) if (patch[key] !== undefined) update[key] = patch[key];
+      await db.update(schema.users).set(update).where(and(eq(schema.users.organisationId, organisationId), eq(schema.users.id, userId)));
+      const rows = await db.select().from(schema.users).where(and(eq(schema.users.organisationId, organisationId), eq(schema.users.id, userId))).limit(1);
+      const row = rows[0];
+      if (!row) return null;
+      const profile = await this.getUserProfile(organisationId, userId);
+      return { userId: row.id, email: row.email, displayName: row.displayName, organisationId, role: row.role, status: profile.status, mfaEnabled: Number(profile.mfaEnabled) !== 0 };
+    },
+
+    async setUserPassword(userId, credential) {
+      await db.update(schema.users).set({ salt: credential.salt, hash: credential.hash, iterations: credential.iterations, updatedAt: now() }).where(eq(schema.users.id, userId));
+      return { ok: true };
+    },
+
+    async getUserProfile(organisationId, userId) {
+      try {
+        const rows = await db.select().from(schema.userProfiles).where(and(eq(schema.userProfiles.organisationId, organisationId), eq(schema.userProfiles.userId, userId))).limit(1);
+        const row = rows[0];
+        return row ? { userId: row.userId, organisationId: row.organisationId, status: row.status, mfaSecret: row.mfaSecret, mfaEnabled: row.mfaEnabled } : { userId, organisationId, status: "active", mfaSecret: "", mfaEnabled: 0 };
+      } catch {
+        return { userId, organisationId, status: "active", mfaSecret: "", mfaEnabled: 0 };
+      }
+    },
+
+    async upsertUserProfile(organisationId, userId, patch) {
+      const timestamp = now();
+      const existing = await this.getUserProfile(organisationId, userId);
+      const merged = {
+        userId,
+        organisationId,
+        status: patch.status ?? existing.status ?? "active",
+        mfaSecret: patch.mfaSecret !== undefined ? patch.mfaSecret : existing.mfaSecret ?? "",
+        mfaEnabled: patch.mfaEnabled !== undefined ? (patch.mfaEnabled ? 1 : 0) : existing.mfaEnabled ?? 0,
+      };
+      try {
+        const rows = await db.select({ userId: schema.userProfiles.userId }).from(schema.userProfiles).where(eq(schema.userProfiles.userId, userId)).limit(1);
+        if (rows[0]) await db.update(schema.userProfiles).set({ ...merged, updatedAt: timestamp }).where(eq(schema.userProfiles.userId, userId));
+        else await db.insert(schema.userProfiles).values({ ...merged, createdAt: timestamp, updatedAt: timestamp });
+      } catch { /* table not migrated yet */ }
+      return { ...merged };
+    },
+
+    // ---- custom roles ------------------------------------------------
+
+    async listCustomRoles(organisationId) {
+      try {
+        const rows = await db.select().from(schema.customRoles).where(eq(schema.customRoles.organisationId, organisationId)).orderBy(schema.customRoles.name);
+        return rows.map((row) => ({ id: row.id, name: row.name, capabilities: parseArray(row.capabilitiesJson) }));
+      } catch { return []; }
+    },
+
+    async getCustomRoleByName(organisationId, name) {
+      try {
+        const rows = await db.select().from(schema.customRoles).where(and(eq(schema.customRoles.organisationId, organisationId), eq(schema.customRoles.name, name))).limit(1);
+        const row = rows[0];
+        return row ? { id: row.id, name: row.name, capabilities: parseArray(row.capabilitiesJson) } : null;
+      } catch { return null; }
+    },
+
+    async createCustomRole(organisationId, { name, capabilities }) {
+      const timestamp = now();
+      const record = { id: crypto.randomUUID(), organisationId, name, capabilitiesJson: JSON.stringify(capabilities ?? []), createdAt: timestamp, updatedAt: timestamp };
+      try {
+        await db.insert(schema.customRoles).values(record);
+      } catch {
+        const existing = await this.getCustomRoleByName(organisationId, name);
+        if (existing) { await this.updateCustomRole(organisationId, existing.id, { capabilities }); return { ...existing, capabilities: capabilities ?? [] }; }
+      }
+      return { id: record.id, name, capabilities: capabilities ?? [] };
+    },
+
+    async updateCustomRole(organisationId, id, patch) {
+      const update = { updatedAt: now() };
+      if (patch.name !== undefined) update.name = patch.name;
+      if (patch.capabilities !== undefined) update.capabilitiesJson = JSON.stringify(patch.capabilities);
+      await db.update(schema.customRoles).set(update).where(and(eq(schema.customRoles.organisationId, organisationId), eq(schema.customRoles.id, id)));
+      const rows = await db.select().from(schema.customRoles).where(and(eq(schema.customRoles.organisationId, organisationId), eq(schema.customRoles.id, id))).limit(1);
+      const row = rows[0];
+      return row ? { id: row.id, name: row.name, capabilities: parseArray(row.capabilitiesJson) } : null;
+    },
+
+    async deleteCustomRole(organisationId, id) {
+      await db.delete(schema.customRoles).where(and(eq(schema.customRoles.organisationId, organisationId), eq(schema.customRoles.id, id)));
+      return { ok: true };
+    },
+
+    // ---- cohorts + assignments ---------------------------------------
+
+    async listCohorts(organisationId) {
+      try {
+        const rows = await db.select().from(schema.cohorts).where(eq(schema.cohorts.organisationId, organisationId)).orderBy(schema.cohorts.name);
+        return rows.map((row) => ({ id: row.id, organisationId: row.organisationId, name: row.name, description: row.description, autoEnrolRole: row.autoEnrolRole, createdAt: row.createdAt }));
+      } catch { return []; }
+    },
+
+    async getCohort(organisationId, id) {
+      try {
+        const rows = await db.select().from(schema.cohorts).where(and(eq(schema.cohorts.organisationId, organisationId), eq(schema.cohorts.id, id))).limit(1);
+        const row = rows[0];
+        return row ? { id: row.id, organisationId: row.organisationId, name: row.name, description: row.description, autoEnrolRole: row.autoEnrolRole, createdAt: row.createdAt } : null;
+      } catch { return null; }
+    },
+
+    async createCohort(organisationId, { name, description, autoEnrolRole }) {
+      const timestamp = now();
+      const record = { id: crypto.randomUUID(), organisationId, name, description: description ?? "", autoEnrolRole: autoEnrolRole ?? "", createdAt: timestamp, updatedAt: timestamp };
+      await db.insert(schema.cohorts).values(record);
+      return { id: record.id, organisationId, name, description: record.description, autoEnrolRole: record.autoEnrolRole, createdAt: timestamp };
+    },
+
+    async updateCohort(organisationId, id, patch) {
+      const update = { updatedAt: now() };
+      for (const key of ["name", "description", "autoEnrolRole"]) if (patch[key] !== undefined) update[key] = patch[key];
+      await db.update(schema.cohorts).set(update).where(and(eq(schema.cohorts.organisationId, organisationId), eq(schema.cohorts.id, id)));
+      return this.getCohort(organisationId, id);
+    },
+
+    async deleteCohort(organisationId, id) {
+      await db.delete(schema.cohorts).where(and(eq(schema.cohorts.organisationId, organisationId), eq(schema.cohorts.id, id)));
+      try { await db.delete(schema.cohortMembers).where(and(eq(schema.cohortMembers.organisationId, organisationId), eq(schema.cohortMembers.cohortId, id))); } catch { /* tolerate */ }
+      try { await db.delete(schema.assignments).where(and(eq(schema.assignments.organisationId, organisationId), eq(schema.assignments.targetType, "cohort"), eq(schema.assignments.targetId, id))); } catch { /* tolerate */ }
+      return { ok: true };
+    },
+
+    async addCohortMember(organisationId, cohortId, userId) {
+      const timestamp = now();
+      const record = { id: crypto.randomUUID(), organisationId, cohortId, userId, createdAt: timestamp };
+      try { await db.insert(schema.cohortMembers).values(record); }
+      catch { /* unique conflict — already a member */ }
+      return { ...record };
+    },
+
+    async removeCohortMember(organisationId, cohortId, userId) {
+      await db.delete(schema.cohortMembers).where(and(eq(schema.cohortMembers.organisationId, organisationId), eq(schema.cohortMembers.cohortId, cohortId), eq(schema.cohortMembers.userId, userId)));
+      return { ok: true };
+    },
+
+    async listCohortMembers(organisationId, cohortId) {
+      try {
+        const rows = await db.select().from(schema.cohortMembers).where(and(eq(schema.cohortMembers.organisationId, organisationId), eq(schema.cohortMembers.cohortId, cohortId)));
+        return rows.map((row) => row.userId);
+      } catch { return []; }
+    },
+
+    async listUserCohortIds(organisationId, userId) {
+      try {
+        const rows = await db.select().from(schema.cohortMembers).where(and(eq(schema.cohortMembers.organisationId, organisationId), eq(schema.cohortMembers.userId, userId)));
+        return rows.map((row) => row.cohortId);
+      } catch { return []; }
+    },
+
+    async listAssignments(organisationId) {
+      try {
+        const rows = await db.select().from(schema.assignments).where(eq(schema.assignments.organisationId, organisationId)).orderBy(desc(schema.assignments.createdAt));
+        return rows.map((row) => ({ id: row.id, organisationId: row.organisationId, targetType: row.targetType, targetId: row.targetId, courseId: row.courseId, dueDate: row.dueDate ?? null, required: Number(row.required) !== 0 ? 1 : 0, note: row.note, createdBy: row.createdBy, createdAt: row.createdAt }));
+      } catch { return []; }
+    },
+
+    async createAssignment(organisationId, assignment) {
+      const timestamp = now();
+      const record = { id: crypto.randomUUID(), organisationId, targetType: assignment.targetType, targetId: assignment.targetId, courseId: assignment.courseId, dueDate: assignment.dueDate ?? null, required: assignment.required === false ? 0 : 1, note: assignment.note ?? "", createdBy: assignment.createdBy ?? "", createdAt: timestamp, updatedAt: timestamp };
+      await db.insert(schema.assignments).values(record);
+      return { id: record.id, organisationId, targetType: record.targetType, targetId: record.targetId, courseId: record.courseId, dueDate: record.dueDate, required: record.required, note: record.note, createdBy: record.createdBy, createdAt: timestamp };
+    },
+
+    async deleteAssignment(organisationId, id) {
+      await db.delete(schema.assignments).where(and(eq(schema.assignments.organisationId, organisationId), eq(schema.assignments.id, id)));
+      return { ok: true };
+    },
+
+    // ---- notifications -----------------------------------------------
+
+    async listNotifications(organisationId, userId) {
+      try {
+        const rows = await db.select().from(schema.notifications).where(and(eq(schema.notifications.organisationId, organisationId), eq(schema.notifications.userId, userId))).orderBy(desc(schema.notifications.createdAt));
+        return rows.map((row) => ({ id: row.id, organisationId: row.organisationId, userId: row.userId, kind: row.kind, title: row.title, body: row.body, readAt: row.readAt ?? null, createdAt: row.createdAt }));
+      } catch { return []; }
+    },
+
+    async createNotification(organisationId, { userId, kind, title, body }) {
+      const timestamp = now();
+      const record = { id: crypto.randomUUID(), organisationId, userId, kind: kind ?? "info", title: title ?? "", body: body ?? "", readAt: null, createdAt: timestamp };
+      try { await db.insert(schema.notifications).values(record); } catch { /* table not migrated */ }
+      return { ...record };
+    },
+
+    async markNotificationRead(organisationId, id, userId) {
+      try { await db.update(schema.notifications).set({ readAt: now() }).where(and(eq(schema.notifications.organisationId, organisationId), eq(schema.notifications.id, id), eq(schema.notifications.userId, userId))); return { ok: true }; }
+      catch { return { ok: false }; }
+    },
+
+    // ---- provisioning config -----------------------------------------
+
+    async getProvisioningConfig(organisationId) {
+      const fallback = { organisationId, ssoEnabled: false, scimEnabled: false, allowedDomains: [], groupRoleMap: {}, defaultRole: "Learner", scimTokenHash: "" };
+      try {
+        const rows = await db.select().from(schema.provisioningConfig).where(eq(schema.provisioningConfig.organisationId, organisationId)).limit(1);
+        const row = rows[0];
+        return row ? { organisationId, ssoEnabled: Number(row.ssoEnabled) !== 0, scimEnabled: Number(row.scimEnabled) !== 0, allowedDomains: parseArray(row.allowedDomainsJson), groupRoleMap: parseObject(row.groupRoleMapJson), defaultRole: row.defaultRole, scimTokenHash: row.scimTokenHash } : fallback;
+      } catch { return fallback; }
+    },
+
+    async upsertProvisioningConfig(organisationId, patch) {
+      const timestamp = now();
+      const existing = await this.getProvisioningConfig(organisationId);
+      const merged = {
+        organisationId,
+        ssoEnabled: patch.ssoEnabled !== undefined ? Boolean(patch.ssoEnabled) : existing.ssoEnabled,
+        scimEnabled: patch.scimEnabled !== undefined ? Boolean(patch.scimEnabled) : existing.scimEnabled,
+        allowedDomains: patch.allowedDomains !== undefined ? patch.allowedDomains : existing.allowedDomains,
+        groupRoleMap: patch.groupRoleMap !== undefined ? patch.groupRoleMap : existing.groupRoleMap,
+        defaultRole: patch.defaultRole !== undefined ? patch.defaultRole : existing.defaultRole,
+        scimTokenHash: patch.scimTokenHash !== undefined ? patch.scimTokenHash : existing.scimTokenHash,
+      };
+      const row = { organisationId, ssoEnabled: merged.ssoEnabled ? 1 : 0, scimEnabled: merged.scimEnabled ? 1 : 0, allowedDomainsJson: JSON.stringify(merged.allowedDomains), groupRoleMapJson: JSON.stringify(merged.groupRoleMap), defaultRole: merged.defaultRole, scimTokenHash: merged.scimTokenHash };
+      try {
+        const rows = await db.select({ organisationId: schema.provisioningConfig.organisationId }).from(schema.provisioningConfig).where(eq(schema.provisioningConfig.organisationId, organisationId)).limit(1);
+        if (rows[0]) await db.update(schema.provisioningConfig).set({ ...row, updatedAt: timestamp }).where(eq(schema.provisioningConfig.organisationId, organisationId));
+        else await db.insert(schema.provisioningConfig).values({ ...row, createdAt: timestamp, updatedAt: timestamp });
+      } catch { /* table not migrated */ }
+      return merged;
     },
   };
 }

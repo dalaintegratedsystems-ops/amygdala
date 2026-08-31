@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { extractKnowledgeAI } from "../../../lib/ai.mjs";
 import { extractTypedKnowledge } from "../../../lib/knowledge.mjs";
 import { embedChunksForStore } from "../../../lib/retrieval.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 export async function POST(request: Request) {

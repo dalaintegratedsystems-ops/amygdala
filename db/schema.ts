@@ -183,6 +183,94 @@ export const credentials = sqliteTable("credentials", {
   ...timestamps,
 }, (table) => [uniqueIndex("idx_credentials_key").on(table.organisationId, table.userId, table.courseId)]);
 
+// Workstream B — learner management. Additive, tenant-scoped tables. The store
+// tolerates their absence pre-migration (reads fall back to safe defaults), so
+// deploying before migrating degrades gracefully.
+
+// Lifecycle + security profile for a user, kept off the `users` table so the
+// login path (which selects explicit columns) is never affected by rollout.
+// status: active | invited | suspended | deactivated. One row per user.
+export const userProfiles = sqliteTable("user_profiles", {
+  userId: text("user_id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  status: text("status").notNull().default("active"),
+  // Base32 TOTP secret (empty until enrolled) + a 0/1 enabled flag.
+  mfaSecret: text("mfa_secret").notNull().default(""),
+  mfaEnabled: integer("mfa_enabled").notNull().default(0),
+  ...timestamps,
+}, (table) => [index("idx_user_profiles_org").on(table.organisationId)]);
+
+// Per-workspace custom role: a name + an explicit capability set (JSON array).
+// Enforced through the same `authorize` decision as the built-in tiers.
+export const customRoles = sqliteTable("custom_roles", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  name: text("name").notNull(),
+  capabilitiesJson: text("capabilities_json").notNull().default("[]"),
+  ...timestamps,
+}, (table) => [uniqueIndex("idx_custom_roles_org_name").on(table.organisationId, table.name)]);
+
+// A team / cohort. `autoEnrolRole` optionally pulls every user of a role into
+// the cohort automatically (computed at read time, not materialised).
+export const cohorts = sqliteTable("cohorts", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  autoEnrolRole: text("auto_enrol_role").notNull().default(""),
+  ...timestamps,
+}, (table) => [index("idx_cohorts_org").on(table.organisationId)]);
+
+// Explicit cohort membership (auto-enrolment is layered on at read time).
+export const cohortMembers = sqliteTable("cohort_members", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  cohortId: text("cohort_id").notNull(),
+  userId: text("user_id").notNull(),
+  createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("idx_cohort_members_key").on(table.cohortId, table.userId)]);
+
+// A course assignment targeting a single user, a cohort, or a role. Auto-enrol
+// is expressed by cohort/role targets and expanded by the assignment engine.
+export const assignments = sqliteTable("assignments", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  // "user" | "cohort" | "role"
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(),
+  courseId: text("course_id").notNull(),
+  dueDate: text("due_date"),
+  required: integer("required").notNull().default(1),
+  note: text("note").notNull().default(""),
+  createdBy: text("created_by").notNull().default(""),
+  ...timestamps,
+}, (table) => [index("idx_assignments_org").on(table.organisationId)]);
+
+// In-app notifications (assignment nudges, invites). Email delivery is a seam.
+export const notifications = sqliteTable("notifications", {
+  id: text("id").primaryKey(),
+  organisationId: text("organisation_id").notNull(),
+  userId: text("user_id").notNull(),
+  kind: text("kind").notNull().default("info"),
+  title: text("title").notNull().default(""),
+  body: text("body").notNull().default(""),
+  readAt: text("read_at"),
+  createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_notifications_user").on(table.organisationId, table.userId)]);
+
+// Per-workspace SSO/SCIM provisioning config. Activation needs an external IdP;
+// the seam persists the config and group->role mapping without faking it live.
+export const provisioningConfig = sqliteTable("provisioning_config", {
+  organisationId: text("organisation_id").primaryKey(),
+  ssoEnabled: integer("sso_enabled").notNull().default(0),
+  scimEnabled: integer("scim_enabled").notNull().default(0),
+  allowedDomainsJson: text("allowed_domains_json").notNull().default("[]"),
+  groupRoleMapJson: text("group_role_map_json").notNull().default("{}"),
+  defaultRole: text("default_role").notNull().default("Learner"),
+  scimTokenHash: text("scim_token_hash").notNull().default(""),
+  ...timestamps,
+});
+
 // Append-only, tenant-scoped audit trail.
 export const auditEvents = sqliteTable("audit_events", {
   id: text("id").primaryKey(),

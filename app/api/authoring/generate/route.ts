@@ -4,7 +4,7 @@ import { generateCourseFromSourceAI } from "../../../lib/ai.mjs";
 import { retrieveRelevant } from "../../../lib/retrieval.mjs";
 import { enrichCoursePedagogy } from "../../../lib/pedagogy.mjs";
 import { assessCourseCoverage } from "../../../lib/coverage.mjs";
-import { authorizeRequest } from "../../../lib/auth.mjs";
+import { authorizeRequest } from "../../../lib/access.mjs";
 import { getStore } from "../../../lib/store.mjs";
 
 export async function POST(request: Request) {

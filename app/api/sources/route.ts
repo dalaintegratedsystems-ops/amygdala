@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { authorizeRequest } from "../../lib/auth.mjs";
+import { authorizeRequest } from "../../lib/access.mjs";
 import { getStore } from "../../lib/store.mjs";
 
 const ALLOWED_TYPES = new Set(["application/pdf", "text/plain", "text/markdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/png", "image/jpeg"]);
