@@ -15,7 +15,6 @@
 
 import {
   MIN_MATCH_SCORE,
-  SAFE_FALLBACK,
   VERIFIED_SCORE,
   answerGroundedQuestion,
   isPromptInjection,
