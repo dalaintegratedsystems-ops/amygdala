@@ -975,3 +975,23 @@ html[data-performance="low"] .panel::after, html[data-performance="low"] .metric
 
 .objective-list { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 8px; }
 .objective-list li { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--muted); }
+
+.people-form { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.people-form label { display: grid; gap: 4px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; min-width: 160px; flex: 1; }
+.people-form input, .people-form select, .people-form textarea, .csv-input { min-height: 40px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: #0d1523; color: var(--ink); }
+.csv-input { width: 100%; min-height: 120px; padding: 12px; font-family: ui-monospace, monospace; font-size: 12px; }
+.invite-banner { margin-top: 14px; padding: 12px 14px; border: 1px solid rgba(114,221,239,.3); border-radius: 12px; background: rgba(114,221,239,.06); display: grid; gap: 8px; }
+.invite-banner code { word-break: break-all; font-size: 11px; color: var(--cyan-bright); }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.import-preview { margin-top: 14px; }
+.inline-check { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; text-transform: none !important; font-size: 13px !important; letter-spacing: 0 !important; color: var(--ink) !important; }
+.capability-picks { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0; font-size: 12px; color: var(--muted); }
+.wallet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.wallet-card { display: grid; gap: 8px; }
+.wallet-card strong { font-size: 32px; letter-spacing: -.04em; }
+.wallet-card code { font-size: 10px; color: var(--dim); word-break: break-all; }
+.nudge-list { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.status-pill.active, .status-pill.completed, .status-pill.valid { color: var(--green); }
+.status-pill.invited, .status-pill.not-started, .status-pill.recertify-due { color: var(--violet); border-color: rgba(168,137,250,.25); background: rgba(168,137,250,.06); }
+.status-pill.suspended, .status-pill.overdue, .status-pill.expired { color: var(--amber); border-color: rgba(239,199,125,.25); background: rgba(239,199,125,.06); }
+.status-pill.deactivated { color: var(--danger); border-color: rgba(245,151,167,.25); background: rgba(245,151,167,.06); }

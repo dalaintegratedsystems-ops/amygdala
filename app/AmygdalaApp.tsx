@@ -4,13 +4,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { calculateReadiness } from "./lib/domain.mjs";
 import { buildTranscript, generateProcedureDiagramSvg } from "./lib/simulation.mjs";
-import { platformRoleCapabilities } from "./lib/security.mjs";
+import { capabilityCatalog, platformRoleCapabilities, roleTiers } from "./lib/security.mjs";
 import { competencyModels, defaultCompetencyModel } from "./lib/analytics.mjs";
 import PromoIntro from "./PromoIntro";
 import { CourseWizard } from "./components/CourseWizard";
 import { SimulationBuilder } from "./components/SimulationBuilder";
 import { SimulationRunner } from "./components/SimulationRunner";
 import { useBrandKit } from "./components/BrandKit";
+import { UserManagement } from "./components/UserManagement";
+import { TeamsPanel } from "./components/TeamsPanel";
+import { AccountProfile, CredentialWallet, MyAssignments } from "./components/LearnerHub";
 import type { SimulationDefinition, SimOrigin, LearnerProgress } from "./components/types";
 
 // All enterprise APIs authenticate via the HttpOnly session cookie (sent
@@ -184,6 +187,9 @@ const adminNavigation: Array<[string, string, string]> = [
   ["/admin/training-studio", "Training Studio", "✦"],
   ["/admin/simulations", "Simulations", "◇"],
   ["/admin/programmes", "Programmes", "▤"],
+  ["/admin/people", "People", "☺"],
+  ["/admin/teams", "Teams", "☰"],
+  ["/admin/manager", "Manager", "↗"],
   ["/admin/ai-activity", "AI activity", "⌁"],
   ["/admin/analytics", "Analytics", "↗"],
   ["/admin/access", "Access & audit", "⚙"],
@@ -195,6 +201,8 @@ const learnerNavigation: Array<[string, string, string]> = [
   ["/learner/simulator", "Product Simulator", "◇"],
   ["/learner/assessment", "Assessment", "✓"],
   ["/learner/results", "Readiness", "◎"],
+  ["/learner/wallet", "Credentials", "▣"],
+  ["/learner/account", "Account", "☺"],
   ["/learner/profile", "Accessibility", "⚙"],
 ];
 
@@ -577,11 +585,40 @@ function AnalyticsPage() {
 
 function AccessAudit() {
   const capabilities = platformRoleCapabilities as Record<string, string[]>;
-  const roles = Object.keys(capabilities);
-  const actions = [...new Set(roles.flatMap((role) => capabilities[role]))].sort();
+  const roles = roleTiers;
+  const actions = capabilityCatalog.map((entry) => entry.id);
+  const [custom, setCustom] = useState<Array<{ id: string; name: string; capabilities: string[] }>>([]);
+  const [name, setName] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  const [provisioning, setProvisioning] = useState<{ message?: string; allowedDomains?: string[]; live?: boolean } | null>(null);
+  const [domains, setDomains] = useState("");
+  useEffect(() => {
+    fetch("/api/roles").then((response) => (response.ok ? response.json() : null)).then((data) => { if (data?.custom) setCustom(data.custom); }).catch(() => {});
+    fetch("/api/provisioning").then((response) => (response.ok ? response.json() : null)).then((data) => {
+      if (data?.config) { setProvisioning(data.config); setDomains((data.config.allowedDomains ?? []).join(", ")); }
+    }).catch(() => {});
+  }, []);
+  async function saveRole(event: React.FormEvent) {
+    event.preventDefault();
+    const response = await fetch("/api/roles", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, capabilities: picked }) });
+    if (response.ok) {
+      const data = await response.json() as { role: { id: string; name: string; capabilities: string[] } };
+      setCustom((current) => [...current.filter((role) => role.name !== data.role.name), data.role]);
+      setName(""); setPicked([]);
+    }
+  }
+  async function saveDomains(event: React.FormEvent) {
+    event.preventDefault();
+    const allowedDomains = domains.split(",").map((item) => item.trim()).filter(Boolean);
+    const response = await fetch("/api/provisioning", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ allowedDomains }) });
+    if (response.ok) {
+      const data = await response.json() as { config: { message?: string; allowedDomains?: string[]; live?: boolean } };
+      setProvisioning(data.config);
+    }
+  }
   return (
     <div className="page-content">
-      <div className="page-heading"><div><span className="eyebrow">Access controls</span><h1>Access &amp; audit</h1><p>Role-based access, tenant isolation and an exportable, tamper-evident audit trail.</p></div>
+      <div className="page-heading"><div><span className="eyebrow">Access controls</span><h1>Access &amp; audit</h1><p>Tiered capabilities, optional custom roles, tenant isolation and an exportable audit trail.</p></div>
         <button className="button button-secondary" onClick={() => downloadResponse("/api/audit/export?format=csv", "amygdala-audit.csv")}>Export audit log (CSV)</button></div>
       <div className="security-grid">
         <section className="panel security-card"><div className="panel-header"><div><span className="tiny-label">Tenant isolation</span><h2>Workspace boundary</h2></div><StatusPill value="Verified" /></div><div className="security-body">
@@ -590,14 +627,33 @@ function AccessAudit() {
           <div><small>Passwords</small><strong>PBKDF2-SHA-256, per-user salt</strong></div>
         </div></section>
         <section className="panel security-card"><div className="panel-header"><div><span className="tiny-label">Audit trail</span><h2>Traceable actions</h2></div><StatusPill value="Persisted" /></div><div className="security-body">
-          <div><small>Coverage</small><strong>Source, course, approval and AI answer events</strong></div>
+          <div><small>Coverage</small><strong>Accounts, roles, assignments, sources and AI answers</strong></div>
           <div><small>Scope</small><strong>Tenant-scoped export (CSV / JSON)</strong></div>
           <div><small>Storage</small><strong>Append-only audit_events in D1</strong></div>
         </div></section>
       </div>
       <section className="panel table-panel"><div className="panel-header"><div><span className="tiny-label">Role-based access control</span><h2>Capability matrix</h2></div></div><div className="table-scroll"><table><thead><tr><th>Capability</th>{roles.map((role) => <th key={role}>{role}</th>)}</tr></thead><tbody>
-        {actions.map((action) => <tr key={action}><td><strong>{action}</strong></td>{roles.map((role) => <td key={role}>{capabilities[role].includes(action) ? <span className="rbac-yes">✓</span> : <span className="rbac-no">✕</span>}</td>)}</tr>)}
+        {actions.map((action) => <tr key={action}><td><strong>{action}</strong></td>{roles.map((role) => <td key={role}>{(capabilities[role] ?? []).includes(action) ? <span className="rbac-yes">✓</span> : <span className="rbac-no">✕</span>}</td>)}</tr>)}
       </tbody></table></div></section>
+      <section className="panel">
+        <div className="panel-header"><div><span className="tiny-label">Optional</span><h2>Custom workspace roles</h2></div></div>
+        <form className="people-form" onSubmit={saveRole}>
+          <label>Name<input value={name} onChange={(event) => setName(event.target.value)} required /></label>
+          <button className="button button-primary" type="submit">Save role</button>
+        </form>
+        <div className="capability-picks">{capabilityCatalog.map((entry) => (
+          <label key={entry.id}><input type="checkbox" checked={picked.includes(entry.id)} onChange={(event) => setPicked((current) => event.target.checked ? [...current, entry.id] : current.filter((id) => id !== entry.id))} /> {entry.label}</label>
+        ))}</div>
+        {custom.length > 0 && <ul>{custom.map((role) => <li key={role.id}><strong>{role.name}</strong> — {role.capabilities.join(", ") || "no capabilities"}</li>)}</ul>}
+      </section>
+      <section className="panel">
+        <div className="panel-header"><div><span className="tiny-label">SSO / SCIM</span><h2>Provisioning seam</h2></div><StatusPill value="Needs IdP" /></div>
+        <p>{provisioning?.message ?? "SSO and SCIM 2.0 endpoints exist as a seam. They stay inactive until an identity provider is connected."}</p>
+        <form className="people-form" onSubmit={saveDomains}>
+          <label>Allowed signup domains<input value={domains} onChange={(event) => setDomains(event.target.value)} placeholder="example.com, vendor.com" /></label>
+          <button className="button button-secondary" type="submit">Save domains</button>
+        </form>
+      </section>
     </div>
   );
 }
@@ -611,6 +667,9 @@ function AdminApp({ path, setPath, session }: { path: string; setPath: (path: st
   else if (path === "/admin/programmes") content = <Programmes setPath={setPath} />;
   else if (path === "/admin/ai-activity") content = <AIActivity />;
   else if (path === "/admin/analytics") content = <AnalyticsPage />;
+  else if (path === "/admin/people") content = <UserManagement />;
+  else if (path === "/admin/teams") content = <TeamsPanel mode="teams" />;
+  else if (path === "/admin/manager") content = <TeamsPanel mode="manager" />;
   else if (path === "/admin/access") content = <AccessAudit />;
   else content = <CommandCentre session={session} setPath={setPath} />;
   return <Shell mode="admin" path={path} setPath={setPath} session={session}>{content}</Shell>;
@@ -661,6 +720,7 @@ function LearnerHome({ courses, loading, selectCourse, setPath, progress }: { co
   return (
     <div className="page-content learner-home">
       <div className="learner-welcome"><div><span className="eyebrow">Your learning</span><h1>Build product capability.</h1><p>Choose a published course to learn, practise in a safe simulation and validate your readiness.</p></div><ProgressRing value={progress?.readiness ?? 0} label="Readiness" /></div>
+      <MyAssignments onOpenCourse={(courseId) => { selectCourse(courseId); navigate("/learner/simulator", setPath); }} />
       <div className="module-card-grid">{courses.map((entry) => <article key={entry.id}><span className="module-symbol practise">◇</span><span className="module-card-copy"><small>{entry.role || "Course"} · {entry.course.simulation.steps.length} steps</small><strong>{entry.title}</strong><em>Grounded to {entry.course.citation.title}</em></span><button onClick={() => { selectCourse(entry.id); navigate("/learner/simulator", setPath); }} aria-label={`Start ${entry.title}`}>→</button></article>)}</div>
     </div>
   );
@@ -864,6 +924,8 @@ function LearnerApp({ path, setPath, session }: { path: string; setPath: (path: 
   else if (path === "/learner/assessment") content = <Assessment course={selectedCourse} simulationScore={simulationScore} onComplete={(score) => recordAttempt("assessment", score)} setPath={setPath} />;
   else if (path === "/learner/results") content = <Results learningScore={learningScore} simulationScore={simulationScore} assessmentScore={assessmentScore} setPath={setPath} />;
   else if (path === "/learner/certificate") content = <Certificate course={selectedCourse} session={session} learningScore={learningScore} simulationScore={simulationScore} assessmentScore={assessmentScore} />;
+  else if (path === "/learner/wallet") content = <CredentialWallet />;
+  else if (path === "/learner/account") content = <AccountProfile />;
   else if (path === "/learner/profile") content = <AccessibilitySettings reduced={reduced} setReduced={setReduced} lowPerformance={lowPerformance} setLowPerformance={setLowPerformance} twoD={twoD} setTwoD={setTwoD} captions={captions} setCaptions={setCaptions} />;
   else content = <LearnerHome courses={courses} loading={loadingCourses} selectCourse={setSelectedCourseId} setPath={setPath} progress={progress} />;
   return <Shell mode="learner" path={path} setPath={setPath} session={session}>{content}</Shell>;
@@ -878,18 +940,57 @@ const DEMO_ACCOUNTS: Record<string, { label: string }> = {
 const BOOTSTRAP_ADMIN_EMAIL = "admin@amygdalalishay.com";
 
 function SignIn({ setPath }: { setPath: (path: string) => void }) {
-  const as = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("as") ?? "admin" : "admin";
-  const [email, setEmail] = useState(BOOTSTRAP_ADMIN_EMAIL);
+  const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const as = params.get("as") ?? "admin";
+  const token = params.get("token") ?? "";
+  const mode = params.get("invite") ? "invite" : params.get("reset") ? "reset" : params.get("signup") ? "signup" : params.get("forgot") ? "forgot" : "signin";
+  const [email, setEmail] = useState(mode === "signin" ? BOOTSTRAP_ADMIN_EMAIL : "");
+  const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [totp, setTotp] = useState("");
+  const [mfaToken, setMfaToken] = useState("");
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    setLoading(true); setError("");
+    setLoading(true); setError(""); setInfo("");
     try {
-      const response = await fetch("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
-      if (!response.ok) { const data = (await response.json().catch(() => ({}))) as { error?: string }; setError(data.error ?? "Sign-in failed."); return; }
+      if (mode === "invite") {
+        const response = await fetch("/api/auth/invite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, password }) });
+        const data = await response.json() as { error?: string };
+        if (!response.ok) { setError(data.error ?? "Invite failed."); return; }
+        window.location.href = "/learner/home";
+        return;
+      }
+      if (mode === "reset") {
+        const response = await fetch("/api/auth/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "consume", token, password }) });
+        const data = await response.json() as { error?: string };
+        if (!response.ok) { setError(data.error ?? "Reset failed."); return; }
+        setInfo("Password updated. Sign in with your new password.");
+        navigate("/signin", setPath);
+        return;
+      }
+      if (mode === "forgot") {
+        const response = await fetch("/api/auth/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) });
+        const data = await response.json() as { error?: string; resetUrl?: string | null; emailed?: boolean };
+        if (!response.ok) { setError(data.error ?? "Reset failed."); return; }
+        if (data.resetUrl) setInfo(`No email provider configured. Reset link: ${data.resetUrl}`);
+        else setInfo(data.emailed ? "If that account exists, a reset email is on its way." : "If that account exists, a reset link was generated.");
+        return;
+      }
+      if (mode === "signup") {
+        const response = await fetch("/api/auth/signup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password, displayName }) });
+        const data = await response.json() as { error?: string };
+        if (!response.ok) { setError(data.error ?? "Signup is not available for that domain."); return; }
+        window.location.href = "/learner/home";
+        return;
+      }
+      const response = await fetch("/api/auth/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password, totp: totp || undefined, mfaToken: mfaToken || undefined }) });
+      const data = await response.json() as { error?: string; mfaRequired?: boolean; mfaToken?: string };
+      if (data.mfaRequired && data.mfaToken) { setMfaToken(data.mfaToken); setInfo("Enter the 6-digit code from your authenticator app."); return; }
+      if (!response.ok) { setError(data.error ?? "Sign-in failed."); return; }
       window.location.href = as === "learner" ? "/learner/home" : "/admin/command-centre";
     } catch {
       setError("Sign-in failed. Please try again.");
@@ -898,22 +999,52 @@ function SignIn({ setPath }: { setPath: (path: string) => void }) {
     }
   }
 
+  const title = mode === "invite" ? "Set your password" : mode === "reset" ? "Choose a new password" : mode === "forgot" ? "Reset your password" : mode === "signup" ? "Create an account" : "Sign in to Amygdala";
+
   return (
     <div className="marketing-shell">
       <MarketingHeader path="/signin" setPath={setPath} />
       <main className="signin-main">
         <div className="signin-card">
           <span className="eyebrow"><span /> Secure sign-in</span>
-          <h1>Sign in to Amygdala</h1>
-          <p>Sessions are signed and HttpOnly; access is enforced by role and tenant on the server. You’ll {as === "learner" ? "preview the learner experience" : "enter the vendor workspace"} after signing in.</p>
+          <h1>{title}</h1>
+          <p>Sessions are signed and HttpOnly; access is enforced by role and tenant on the server.</p>
           <form onSubmit={submit} className="signin-form">
-            <label htmlFor="signin-email">Work email</label>
-            <input id="signin-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
-            <label htmlFor="signin-password">Password</label>
-            <input id="signin-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
+            {(mode === "signin" || mode === "forgot" || mode === "signup") && (
+              <>
+                <label htmlFor="signin-email">Work email</label>
+                <input id="signin-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} required />
+              </>
+            )}
+            {mode === "signup" && (
+              <>
+                <label htmlFor="signin-name">Display name</label>
+                <input id="signin-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} required />
+              </>
+            )}
+            {mode !== "forgot" && (
+              <>
+                <label htmlFor="signin-password">{mode === "signin" ? "Password" : "New password"}</label>
+                <input id="signin-password" type="password" autoComplete={mode === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} required={mode !== "signin" || !mfaToken} />
+              </>
+            )}
+            {mfaToken && (
+              <>
+                <label htmlFor="signin-totp">Authenticator code</label>
+                <input id="signin-totp" inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={(event) => setTotp(event.target.value)} required />
+              </>
+            )}
             {error && <p className="signin-error" role="alert">{error}</p>}
-            <button className="button button-primary full-width" type="submit" disabled={loading}>{loading ? "Signing in…" : "Sign in"}</button>
+            {info && <p role="status">{info}</p>}
+            <button className="button button-primary full-width" type="submit" disabled={loading}>{loading ? "Working…" : mode === "signin" ? "Sign in" : "Continue"}</button>
           </form>
+          {mode === "signin" && (
+            <div className="signin-sso">
+              <button type="button" className="text-button" onClick={() => navigate("/signin?forgot=1", setPath)}>Forgot password</button>
+              <button type="button" className="text-button" onClick={() => navigate("/signin?signup=1", setPath)}>Domain self-signup</button>
+              <small>SSO / SCIM need an identity provider — they are not live.</small>
+            </div>
+          )}
           <div className="signin-demo"><strong>Workspace administrator</strong><span>{BOOTSTRAP_ADMIN_EMAIL}</span><span>Role: {DEMO_ACCOUNTS[as]?.label ?? "Vendor Administrator"}</span></div>
         </div>
       </main>
