@@ -212,7 +212,7 @@ function AppHeader() {
     <nav className={open ? "open" : ""} aria-label="Document sections">
       {sections.map(([href, label]) => <a key={href} href={`#${href}`} onClick={() => setOpen(false)}>{label}</a>)}
     </nav>
-    <button className="print-button" onClick={() => window.print()}><Icon name="download" size={16} /> Save / print</button>
+    <a className="print-button" href="/reflective-enabler-sop.pdf" download><Icon name="download" size={16} /> Download PDF</a>
   </header>;
 }
 

@@ -38,7 +38,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .sop-header nav { margin-left: auto; display: flex; gap: 25px; }
 .sop-header nav a { color: #677887; font-size: 12px; font-weight: 600; text-decoration: none; }
 .sop-header nav a:hover { color: var(--sop-teal); }
-.print-button { min-height: 39px; padding: 0 15px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid #d3dedc; border-radius: 9px; color: var(--sop-navy); background: white; font-size: 11px; font-weight: 700; cursor: pointer; box-shadow: 0 5px 18px rgba(20,47,74,.06); }
+.print-button { min-height: 39px; padding: 0 15px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid #d3dedc; border-radius: 9px; color: var(--sop-navy); background: white; font-size: 11px; font-weight: 700; text-decoration: none; cursor: pointer; box-shadow: 0 5px 18px rgba(20,47,74,.06); }
 .nav-toggle { display: none; }
 
 /* Shared */
