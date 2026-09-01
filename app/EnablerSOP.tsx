@@ -328,6 +328,14 @@ export default function EnablerSOP() {
             </div>
           </div>
           <div className="sync-rule"><span>80%</span><p><strong>Use the majority threshold to pace—not to abandon.</strong> When roughly 80% are at the checkpoint, give the next instruction only after the remaining learners are identified and receiving support. If the gap is widespread, stop and reset the whole class.</p></div>
+          <div className="print-checkpoints" aria-hidden="true">
+            {checkpoints.map(checkpoint => <article key={checkpoint.number}>
+              <span>{checkpoint.number} · {checkpoint.label}</span>
+              <h3>{checkpoint.title}</h3>
+              <p><strong>Say:</strong> “{checkpoint.say}”</p>
+              <p><strong>Verify:</strong> {checkpoint.verify}</p>
+            </article>)}
+          </div>
         </div>
       </section>
 
