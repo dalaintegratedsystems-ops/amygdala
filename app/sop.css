@@ -268,6 +268,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .issue-table td { color: #5d707b; font-size: 8px; line-height: 1.5; }
 .issue-table td strong { color: var(--sop-navy); font-size: 9px; }
 .issue-table tbody tr:last-child td { border-bottom: 0; }
+.print-issue-list { display: none; }
 .severity-row { margin-top: 16px; padding: 16px; display: grid; grid-template-columns: repeat(3,1fr); gap: 18px; border-radius: 11px; background: #f2f4f3; }
 .severity-row span { color: #697a82; font-size: 8px; line-height: 1.5; }.severity-row i { width: 7px; height: 7px; margin-right: 8px; display: inline-block; border-radius: 50%; }.severity-row strong { margin-right: 4px; color: var(--sop-navy); }
 .sev-1 { background: #d85b4d; }.sev-2 { background: var(--sop-orange); }.sev-3 { background: var(--sop-teal); }
@@ -369,9 +370,10 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   .sop-site { overflow: visible; }
   .sop-hero { min-height: 250mm; padding: 40mm 18mm; page-break-after: always; grid-template-columns: 1fr; }
   .hero-system { min-height: 115mm; }
-  .impact-strip { width: 100%; margin: -40mm auto 0; page-break-after: always; }
+  .impact-strip { width: 100%; margin: 0 auto; }
   .content-section { width: 100%; padding: 14mm 0; }
   .mandate-section,.lifecycle-section,.readiness-section,.kickstart-section,.live-section,.decision-section,.closeout-section,.escalation-section,.tools-section,.video-section,.governance-section,.source-section { break-before: page; }
+  .mandate-section { break-before: auto; }
   .role-card,.lifecycle-flow article,.readiness-lanes article,.checkpoint-stage,.loop-card,.support-boundary-grid article,.tree-branches article,.closeout-flow article,.reporting-grid article,.checklist-card,.kpi-grid article,.source-card { break-inside: avoid; }
   .lifecycle-section { padding-left: 0; padding-right: 0; }
   .checkpoint-stage { grid-template-columns: 1fr 1fr; }
@@ -382,6 +384,12 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   .print-checkpoints h3 { margin: 2mm 0; color: white; font-size: 13pt; }
   .print-checkpoints p { margin: 2mm 0 0; color: #c9d8dd; font-size: 8pt; line-height: 1.45; }
   .print-checkpoints p strong { color: white; }
+  .issue-table-wrap { display: none; }
+  .print-issue-list { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+  .print-issue-list article { padding: 4mm; break-inside: avoid; border: 1px solid var(--sop-line); border-radius: 3mm; }
+  .print-issue-list h3 { margin: 0 0 2mm; color: var(--sop-navy); font-size: 10pt; }
+  .print-issue-list p { margin: 1.5mm 0 0; color: #5d707b; font-size: 7pt; line-height: 1.4; }
+  .print-issue-list p strong { color: var(--sop-navy); }
   .checklist-items label { min-height: 42px; }
   .checklist-items label > span { color: transparent !important; background: white !important; }
   .video-layout { grid-template-columns: .8fr 1.2fr; }

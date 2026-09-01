@@ -411,6 +411,14 @@ export default function EnablerSOP() {
             <tbody>{issueRows.map(row => <tr key={row[0]}>{row.map((cell, index) => <td key={cell}>{index === 0 ? <strong>{cell}</strong> : cell}</td>)}</tr>)}</tbody>
           </table>
         </div>
+        <div className="print-issue-list" aria-hidden="true">
+          {issueRows.map(row => <article key={row[0]}>
+            <h3>{row[0]}</h3>
+            <p><strong>First response:</strong> {row[1]}</p>
+            <p><strong>Escalate when:</strong> {row[2]}</p>
+            <p><strong>Owner:</strong> {row[3]} · <strong>Send:</strong> {row[4]}</p>
+          </article>)}
+        </div>
         <div className="severity-row">
           <span><i className="sev-1" /><strong>S1 Critical</strong> Safety, safeguarding, theft or total programme outage · immediate</span>
           <span><i className="sev-2" /><strong>S2 Major</strong> More than 20% blocked or session at risk · within session</span>
