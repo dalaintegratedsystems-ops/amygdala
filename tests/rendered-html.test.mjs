@@ -8,17 +8,18 @@ async function render(path = "/") {
   return worker.fetch(new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
 }
 
-test("landing page communicates the Amygdala value proposition", async () => {
+test("landing page communicates the Reflective Enabler SOP", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Turn product knowledge into/);
-  assert.match(html, /customer capability/);
-  assert.match(html, /Enter Interactive Demo/);
+  assert.match(html, /From kit to/);
+  assert.match(html, /learning momentum/);
+  assert.match(html, /five-checkpoint learner kickstart/i);
+  assert.match(html, /ICT &amp; Digital Platform Enablers/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("demo routes render through the shared accessible shell", async () => {
+test("legacy demo routes remain available through the shared shell", async () => {
   const response = await render("/admin/command-centre");
   assert.equal(response.status, 200);
   const html = await response.text();

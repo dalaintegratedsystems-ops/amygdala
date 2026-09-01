@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import AmygdalaApp from "./AmygdalaApp";
+import EnablerSOP from "./EnablerSOP";
 
 export const metadata: Metadata = {
-  title: "Amygdala | Customer capability, verified",
-  description: "Turn approved SaaS product knowledge into immersive, AI-guided customer onboarding and verified readiness.",
+  title: "Reflective Enabler Playbook | End-to-End SOP",
+  description: "A practical end-to-end operating playbook for ICT and Digital Platform Enablers delivering Reflective-funded programmes.",
 };
 
 export default function Home() {
-  return <AmygdalaApp initialPath="/" />;
+  return <EnablerSOP />;
 }
